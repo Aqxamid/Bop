@@ -8,7 +8,8 @@ import '../../services/lrc_parser.dart';
 
 class LyricsScreen extends ConsumerStatefulWidget {
   final Song song;
-  const LyricsScreen({super.key, required this.song});
+  final Color? dominantColor;
+  const LyricsScreen({super.key, required this.song, this.dominantColor});
 
   @override
   ConsumerState<LyricsScreen> createState() => _LyricsScreenState();
@@ -31,8 +32,20 @@ class _LyricsScreenState extends ConsumerState<LyricsScreen> {
     final position = ref.watch(playerProvider.select((s) => s.position));
 
     return Scaffold(
-      backgroundColor: BopTheme.background,
-      body: SafeArea(
+      backgroundColor: Colors.black,
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              (widget.dominantColor ?? BopTheme.background).withOpacity(0.5),
+              Colors.black,
+            ],
+            stops: const [0.0, 0.7],
+          ),
+        ),
+        child: SafeArea(
         child: lyricsAsync.when(
           data: (lyrics) {
             if (lyrics == null || lyrics.isEmpty) {
@@ -147,6 +160,7 @@ class _LyricsScreenState extends ConsumerState<LyricsScreen> {
           error: (e, __) => Center(
             child: Text('Error: $e',
                 style: const TextStyle(color: BopTheme.red)),
+          ),
           ),
         ),
       ),

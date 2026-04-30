@@ -4,7 +4,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:isar/isar.dart';
 import '../services/db_service.dart';
 import '../services/lyrics_service.dart';
-import '../services/discovery_service.dart';
 import '../models/song.dart';
 import '../services/llm_service.dart';
 
@@ -95,7 +94,10 @@ final recentSongsProvider = FutureProvider<List<Song>>((ref) async {
 
 // ── All songs (for Library/Search) ───────────────────────────
 final allSongsProvider = FutureProvider<List<Song>>((ref) async {
-  return DbService.instance.songs.filter().isHiddenEqualTo(false).findAll();
+  final list = await DbService.instance.songs.filter().isHiddenEqualTo(false).findAll();
+  // Sort alphabetically by title, case-insensitive
+  list.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+  return list;
 });
 
 // ── Liked songs ──────────────────────────────────────────────
@@ -109,7 +111,11 @@ final likedSongsProvider = FutureProvider<List<Song>>((ref) async {
 });
 
 // ── Tab navigation provider ──────────────────────────────────
+// Tracks whether LLM model is actually loaded in RAM (reactive)
+final llmModelReadyProvider = StateProvider<bool>((ref) => LlmService.instance.isModelLoaded);
+
 final shellTabIndexProvider = StateProvider<int>((ref) => 0);
+final searchGenreProvider = StateProvider<String?>((ref) => null);
 
 // ── Lyrics fetching ──────────────────────────────────────────
 final lyricsProvider = FutureProvider.family<String?, Song>((ref, song) async {
@@ -118,14 +124,36 @@ final lyricsProvider = FutureProvider.family<String?, Song>((ref, song) async {
   return lyrics;
 });
 
-// ── Editor's picks ───────────────────────────────────────────
-final editorPicksProvider = FutureProvider<List<Song>>((ref) async {
-  return DiscoveryService.instance.getEditorPicks();
-});
+
 
 // ── AI Curated Playlists ─────────────────────────────────────
 final aiPlaylistsProvider = FutureProvider<List<SmartPlaylistData>>((ref) async {
   ref.keepAlive(); // Keep the AI playlists in memory to prevent flickering
+  // Re-run this provider whenever the LLM model state changes
+  ref.watch(llmModelReadyProvider);
   return LlmService.instance.generateSmartPlaylists();
+});
+
+// ── Hidden Gems (Least played songs) ──────────────────────────
+final hiddenGemsProvider = FutureProvider<List<Song>>((ref) async {
+  final all = await DbService.instance.songs.filter().isHiddenEqualTo(false).findAll();
+  all.sort((a, b) => a.playCount.compareTo(b.playCount));
+  return all.take(10).toList();
+});
+
+// ── Playlist Gems (1-2 songs from each playlist) ─────────────
+final playlistGemsProvider = FutureProvider<List<Song>>((ref) async {
+  final playlists = await DbService.instance.playlists.where().findAll();
+  final List<Song> gems = [];
+  for (final p in playlists) {
+    await p.songs.load();
+    final songs = p.songs.toList();
+    if (songs.isNotEmpty) {
+      songs.shuffle();
+      gems.addAll(songs.take(2));
+    }
+  }
+  gems.shuffle();
+  return gems.take(20).toList();
 });
 

@@ -1,4 +1,5 @@
 // lib/main.dart
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -9,7 +10,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'services/db_service.dart';
 import 'services/llm_service.dart';
 import 'theme/app_theme.dart';
-import 'screens/auth/auth_screen.dart';
+import 'screens/auth/onboarding_screen.dart';
 import 'screens/main_shell.dart';
 import 'screens/library/scanning_screen.dart';
 import 'services/notification_service.dart';
@@ -30,21 +31,24 @@ Future<void> main() async {
     statusBarIconBrightness: Brightness.light,
   ));
 
-  // Initialize audio service for media notifications
-  await initAudioService();
-
-  // Request permissions at startup for media access
-  _requestPermissions();
-
-  // Open Isar database
+  // ── Open Isar database FIRST ──────────────────────────────────
+  // Must happen before initAudioService() — AudioService.init() binds
+  // to the Android service via IPC which can disrupt the Pigeon
+  // BinaryMessenger, causing channel-error on path_provider calls.
   await DbService.instance.open();
 
-  // Initialize LLM if model path exists
-  await LlmService.instance.loadModel();
+  // Initialize LLM if model path exists (fire and forget to not block startup)
+  unawaited(LlmService.instance.loadModel());
 
   // Initialize notifications
   await NotificationService.instance.init();
   await NotificationService.instance.scheduleMonthlyRecapReminder();
+
+  // Audio service AFTER DB and other plugins are ready
+  await initAudioService();
+
+  // Request permissions (fire-and-forget, never crash the app)
+  unawaited(_requestPermissions());
 
   final prefs = await SharedPreferences.getInstance();
   final hasOnboarded = prefs.getBool('onboarded') ?? false;
@@ -74,13 +78,13 @@ class BopApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Bop',
+      title: 'Bop v2',
       debugShowCheckedModeBanner: false,
       theme: BopTheme.dark,
       // ── Route table ───────────────────────────
-      initialRoute: hasOnboarded ? '/home' : '/auth',
+      initialRoute: hasOnboarded ? '/home' : '/onboarding',
       routes: {
-        '/auth': (_) => const AuthScreen(),
+        '/onboarding': (_) => const OnboardingScreen(),
         '/scan': (_) => const ScanningScreen(),
         '/home': (_) => const MainShell(),
       },

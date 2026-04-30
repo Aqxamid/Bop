@@ -20,6 +20,8 @@ import '../../models/playlist.dart';
 import '../../widgets/animated_equalizer.dart';
 import '../../providers/player_provider.dart';
 import '../../widgets/playlist_collage.dart';
+import '../../widgets/wrapped_receipt_widget.dart';
+import '../../services/share_service.dart';
 
 IconData _personalityIcon(String iconName) {
   switch (iconName) {
@@ -139,8 +141,10 @@ class WrappedSlideshowScreen extends ConsumerStatefulWidget {
 class _WrappedSlideshowScreenState extends ConsumerState<WrappedSlideshowScreen> with SingleTickerProviderStateMixin {
   final _pageController = PageController();
   int _currentPage = 0;
-  int get _totalPages => _buildSlides(ref.read(boldDesignProvider)).length;
+  // Standardize on false for the bold rendition cleanup
+  int get _totalPages => _buildSlides(false).length;
   late AnimationController _progressController;
+  bool _isPaused = false;
   final AudioPlayer _snippetPlayer = AudioPlayer();
   final ScreenshotController _screenshotController = ScreenshotController();
 
@@ -161,7 +165,31 @@ class _WrappedSlideshowScreenState extends ConsumerState<WrappedSlideshowScreen>
         }
       });
     _progressController.forward();
-    _triggerLlmGeneration();
+    // We now ensure generation is done BEFORE pushing to this screen in stats_screen.dart
+    // but we keep this as a lightweight fallback just in case.
+    if (r.llmRecap.isEmpty) {
+      _triggerLlmGeneration();
+    }
+    _preloadTop5();
+  }
+
+  List<Song> _top5Songs = [];
+  void _preloadTop5() async {
+    try {
+      final data = jsonDecode(r.slidesJsonStr);
+      if (data != null && data['topSongs'] != null) {
+        final top5Data = data['topSongs'] as List<dynamic>;
+        final List<Song> loaded = [];
+        for (final item in top5Data.take(5)) {
+          final id = item['id'] as int?;
+          if (id != null) {
+            final s = await DbService.instance.isar.songs.get(id);
+            if (s != null) loaded.add(s);
+          }
+        }
+        if (mounted) setState(() => _top5Songs = loaded);
+      }
+    } catch (_) {}
   }
 
   Future<void> _triggerLlmGeneration() async {
@@ -192,8 +220,27 @@ class _WrappedSlideshowScreenState extends ConsumerState<WrappedSlideshowScreen>
     }
   }
 
+  void _togglePause() {
+    setState(() {
+      _isPaused = !_isPaused;
+      if (_isPaused) {
+        _progressController.stop();
+        _snippetPlayer.pause();
+      } else {
+        _progressController.forward();
+        if (_snippetPlayer.processingState != ProcessingState.idle) {
+          _snippetPlayer.play();
+        }
+      }
+    });
+  }
+
   void _handlePageChange(int i) {
-    setState(() => _currentPage = i);
+    setState(() {
+      _currentPage = i;
+      _isPaused = false; // Reset pause on page change
+    });
+    
     if (i == _totalPages - 1) {
       _progressController.stop();
       _progressController.value = 1.0;
@@ -201,7 +248,7 @@ class _WrappedSlideshowScreenState extends ConsumerState<WrappedSlideshowScreen>
       _progressController.forward(from: 0.0);
     }
 
-    final slides = _buildSlides(ref.read(boldDesignProvider));
+    final slides = _buildSlides(false);
     if (i < slides.length && slides[i] is _TopSongCard) {
       _playSnippet();
     } else {
@@ -221,7 +268,7 @@ class _WrappedSlideshowScreenState extends ConsumerState<WrappedSlideshowScreen>
         } else {
           await _snippetPlayer.seek(Duration(milliseconds: (dur * 0.3).toInt()));
         }
-        _snippetPlayer.play();
+        if (!_isPaused) _snippetPlayer.play();
       }
     } catch (_) {}
   }
@@ -239,7 +286,7 @@ class _WrappedSlideshowScreenState extends ConsumerState<WrappedSlideshowScreen>
         _TopArtistCard(report: r, isBold: isBold),
         if (hasSongs) ...[
           _TopSongCard(report: r, isBold: isBold),
-          _Top5Card(report: r, isBold: isBold),
+          _Top5Card(report: r, isBold: isBold, loadedSongs: _top5Songs),
         ],
         _VibeMapCard(report: r, isBold: isBold),
         _TimeInsightCard(report: r, isBold: isBold),
@@ -256,9 +303,27 @@ class _WrappedSlideshowScreenState extends ConsumerState<WrappedSlideshowScreen>
       backgroundColor: Colors.black,
       body: Consumer(
         builder: (context, ref, child) {
-          final isBold = ref.watch(boldDesignProvider);
+          // Force standard design
+          const isBold = false;
           final slides = _buildSlides(isBold);
           return GestureDetector(
+            onVerticalDragEnd: (details) {
+              if (details.primaryVelocity! > 500) {
+                Navigator.pop(context);
+              }
+            },
+            onHorizontalDragEnd: (details) {
+              if (details.primaryVelocity! < -500) {
+                _next();
+              } else if (details.primaryVelocity! > 500) {
+                if (_currentPage > 0) {
+                  _pageController.previousPage(
+                    duration: const Duration(milliseconds: 300),
+                    curve: Curves.easeInOut,
+                  );
+                }
+              }
+            },
             onTapUp: (d) {
               final half = MediaQuery.of(context).size.width / 2;
               if (d.globalPosition.dx > half) {
@@ -310,9 +375,17 @@ class _WrappedSlideshowScreenState extends ConsumerState<WrappedSlideshowScreen>
                 Positioned(
                   top: MediaQuery.of(context).padding.top + 24,
                   right: 8,
-                  child: IconButton(
-                    icon: const Icon(Icons.close, color: Colors.white70),
-                    onPressed: () => Navigator.pop(context),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        icon: Icon(_isPaused ? Icons.play_arrow : Icons.pause, color: Colors.white70),
+                        onPressed: _togglePause,
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close, color: Colors.white70),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -860,7 +933,7 @@ class _IntroCard extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Text('${report.generatedAt.year} $monthName'.trim(),
+              Text('$monthName ${report.generatedAt.year}'.trim(),
                   style: const TextStyle(color: Colors.white70, fontSize: 16, fontWeight: FontWeight.w500)),
               const SizedBox(height: 12),
               Text(report.cadence == 'yearly' ? 'Your\nYear\nin Music' : 'Your\nMonth\nin Music',
@@ -1124,7 +1197,8 @@ class _TopSongCard extends StatelessWidget {
 class _Top5Card extends StatelessWidget {
   final WrappedReport report;
   final bool isBold;
-  const _Top5Card({required this.report, required this.isBold});
+  final List<Song> loadedSongs;
+  const _Top5Card({required this.report, required this.isBold, required this.loadedSongs});
 
   @override
   Widget build(BuildContext context) {
@@ -1140,7 +1214,7 @@ class _Top5Card extends StatelessWidget {
     return _Slide(
       gradient: theme.gradient,
       isBold: isBold,
-      child: _Top5List(parsedTop5: parsedTop5, isBold: isBold),
+      child: _Top5List(parsedTop5: parsedTop5, isBold: isBold, loadedSongs: loadedSongs),
     );
   }
 }
@@ -1148,7 +1222,8 @@ class _Top5Card extends StatelessWidget {
 class _Top5List extends StatelessWidget {
   final List<dynamic> parsedTop5;
   final bool isBold;
-  const _Top5List({required this.parsedTop5, this.isBold = false});
+  final List<Song> loadedSongs;
+  const _Top5List({required this.parsedTop5, this.isBold = false, required this.loadedSongs});
 
   @override
   Widget build(BuildContext context) {
@@ -1167,6 +1242,8 @@ class _Top5List extends StatelessWidget {
             final idx = entry.key + 1;
             final item = entry.value;
             final songId = item['id'] as int?;
+            
+            final Song? song = loadedSongs.firstWhere((s) => s.id == songId, orElse: () => Song()..title = 'Unknown');
 
             return Padding(
               padding: const EdgeInsets.only(bottom: 16),
@@ -1178,32 +1255,25 @@ class _Top5List extends StatelessWidget {
                     child: Text('$idx', style: TextStyle(color: Colors.white.withOpacity(0.3), fontSize: 20, fontWeight: FontWeight.w900)),
                   ),
                   const SizedBox(width: 12),
-                  FutureBuilder<Song?>(
-                    future: songId != null ? DbService.instance.isar.songs.get(songId) : Future.value(null),
-                    initialData: null,
-                    builder: (context, songSnap) {
-                      final songArt = songSnap.data?.artBytes;
-                      return Container(
-                        width: 52,
-                        height: 52,
-                        decoration: BoxDecoration(
-                          color: Colors.white10,
+                  Container(
+                    width: 52,
+                    height: 52,
+                    decoration: BoxDecoration(
+                      color: Colors.white10,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: song?.artBytes != null && song!.artBytes!.isNotEmpty
+                      ? ClipRRect(
                           borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: songArt != null && songArt.isNotEmpty
-                          ? ClipRRect(
-                              borderRadius: BorderRadius.circular(8),
-                              child: Image.memory(
-                                Uint8List.fromList(songArt),
-                                fit: BoxFit.cover,
-                                gaplessPlayback: true,
-                                cacheWidth: 120,
-                                cacheHeight: 120,
-                              ),
-                            )
-                          : const Icon(Icons.music_note, color: Colors.white24, size: 24),
-                      );
-                    },
+                          child: Image.memory(
+                            Uint8List.fromList(song.artBytes!),
+                            fit: BoxFit.cover,
+                            gaplessPlayback: true,
+                            cacheWidth: 120,
+                            cacheHeight: 120,
+                          ),
+                        )
+                      : const Icon(Icons.music_note, color: Colors.white24, size: 24),
                   ),
                   const SizedBox(width: 16),
                   Expanded(
@@ -1784,30 +1854,78 @@ class _ShareCardState extends State<_ShareCard> {
   }
 
   Future<void> _shareRecap(BuildContext context) async {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF282828),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => Container(
+        padding: const EdgeInsets.symmetric(vertical: 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Share your recap', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 24),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                _shareOption(
+                  icon: Icons.style,
+                  label: 'Original Story',
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _executeShare(context, isReceipt: false);
+                  },
+                ),
+                _shareOption(
+                  icon: Icons.receipt_long,
+                  label: 'Music Receipt',
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _executeShare(context, isReceipt: true);
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _shareOption({required IconData icon, required String label, required VoidCallback onTap}) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        width: 120,
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        child: Column(
+          children: [
+            Icon(icon, color: BopTheme.green, size: 32),
+            const SizedBox(height: 8),
+            Text(label, style: const TextStyle(color: Colors.white, fontSize: 12)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _executeShare(BuildContext context, {required bool isReceipt}) async {
     try {
       final theme = RecapTheme.get(widget.report.generatedAt.month, widget.report.cadence == 'yearly');
-      final summaryCard = _RecapSummaryCard(
-        report: widget.report,
-        theme: theme,
-        username: _username,
-        avatarPath: _avatarPath,
-        isBold: widget.isBold,
-      );
+      
+      final Widget summaryWidget = isReceipt 
+          ? WrappedReceiptWidget(report: widget.report, username: _username)
+          : _RecapSummaryCard(
+              report: widget.report,
+              theme: theme,
+              username: _username,
+              avatarPath: _avatarPath,
+              isBold: widget.isBold,
+            );
 
-      final image = await ScreenshotController().captureFromWidget(
-        Material(child: summaryCard),
-        delay: const Duration(milliseconds: 100),
-        context: context,
-      );
-
-      final directory = await getTemporaryDirectory();
-      final imagePath = await File('${directory.path}/bop_recap.png').create();
-      await imagePath.writeAsBytes(image);
-
-      await Share.shareXFiles(
-        [XFile(imagePath.path)],
-        text: 'My ${widget.report.periodLabel} on Bop! 🎵 #BopRecap',
-      );
+      await ShareService.shareWrappedRecap(context, summaryWidget, widget.report.periodLabel);
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

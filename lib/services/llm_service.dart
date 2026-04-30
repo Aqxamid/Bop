@@ -9,11 +9,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:llama_flutter_android/llama_flutter_android.dart';
 import 'package:http/http.dart' as http;
-import 'package:isar/isar.dart';
 import '../models/song.dart';
+import '../models/playlist.dart';
 import '../models/wrapped_report.dart';
 import 'db_service.dart';
 import 'lyrics_service.dart';
+import 'package:isar/isar.dart';
 
 class SmartPlaylistData {
   final String name;
@@ -41,6 +42,7 @@ class LlmService {
   bool _isAiEnabled = true;
 
   final modelStatus = ValueNotifier<String?>(null);
+  final isModelLoading = ValueNotifier<bool>(false);
   final modelName = ValueNotifier<String?>(null);
   final generationProgress = ValueNotifier<int>(0);
   List<SmartPlaylistData>? _cachedPlaylists;
@@ -109,79 +111,94 @@ class LlmService {
   }
 
   Future<void> _loadModelInternal([String? modelPath]) async {
-    final path = modelPath ?? await currentModelPath;
-    if (path.isEmpty) return;
-
-    File modelFile = File(path);
-    if (!await modelFile.exists()) {
-      _modelAvailable = false;
-      return;
-    }
-
-    bool isCachePath = path.contains('/cache/') || path.contains('/com.android.providers');
-    final docDir = await getApplicationDocumentsDirectory();
-    bool isAlreadyInDocs = path.contains(docDir.path);
-
-    final originalName = path.split('/').last;
-    if (modelName.value == null || modelName.value != originalName) {
-      modelName.value = originalName;
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_modelNamePref, originalName);
-    }
-
-    if (isCachePath && !isAlreadyInDocs) {
-      try {
-        final docDir = await getApplicationDocumentsDirectory();
-        final newPath = '${docDir.path}/model.gguf';
-
-        if (path != newPath) {
-          print('[LLM] Moving model to internal storage for persistence...');
-          final newFile = File(newPath);
-
-          if (await newFile.exists()) await newFile.delete();
-          await modelFile.copy(newPath);
-
-          modelFile = newFile;
-          await updateModelPath(newPath);
-          print('[LLM] Model persisted at: $newPath');
-        }
-      } catch (e) {
-        print('[LLM] Failed to persist model: $e');
-        print('[LLM] Proceeding with temporary cache path...');
-      }
-    }
-
-    await disposeModel();
-
+    isModelLoading.value = true;
     try {
-      modelStatus.value = "AI: Loading LLM model into RAM...";
-      print('[LLM] Attempting to load model from: ${modelFile.path}');
-      _llama = LlamaController();
-      await _llama!.loadModel(modelPath: modelFile.path);
+      final path = modelPath ?? await currentModelPath;
+      if (path.isEmpty) return;
 
-      _modelAvailable = true;
-      _modelLoaded = true;
-      _modelPath = modelFile.path;
-      modelStatus.value = "AI: Model Ready (Local AI Active)!";
-      Future.delayed(const Duration(seconds: 3), () {
-        if (modelStatus.value != null && modelStatus.value!.contains('Ready')) {
-          modelStatus.value = null;
-        }
-      });
-      print('[LLM] Model loaded successfully');
-    } catch (e) {
-      final errorStr = e.toString();
-      String userMessage = errorStr;
-
-      if (errorStr.contains('libllama.so') || errorStr.contains('dlopen failed')) {
-        userMessage = 'Native library incompatible. Use physical ARM64 device.';
+      File modelFile = File(path);
+      if (!await modelFile.exists()) {
+        _modelAvailable = false;
+        return;
       }
 
-      print('[LLM] Error loading model: $userMessage');
-      modelStatus.value = "Error: $userMessage";
-      _modelAvailable = false;
-      _modelLoaded = false;
-      throw Exception(userMessage);
+      bool isCachePath = path.contains('/cache/') || path.contains('/com.android.providers');
+      final docDir = await getApplicationDocumentsDirectory();
+      bool isAlreadyInDocs = path.contains(docDir.path);
+
+      final originalName = path.split('/').last;
+      if (modelName.value == null || modelName.value != originalName) {
+        modelName.value = originalName;
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(_modelNamePref, originalName);
+      }
+
+      if (isCachePath && !isAlreadyInDocs) {
+        try {
+          final docDir = await getApplicationDocumentsDirectory();
+          final newPath = '${docDir.path}/model.gguf';
+
+          if (path != newPath) {
+            print('[LLM] Moving model to internal storage for persistence...');
+            final newFile = File(newPath);
+
+            if (await newFile.exists()) await newFile.delete();
+            await modelFile.copy(newPath);
+
+            modelFile = newFile;
+            await updateModelPath(newPath);
+            print('[LLM] Model persisted at: $newPath');
+          }
+        } catch (e) {
+          print('[LLM] Failed to persist model: $e');
+          print('[LLM] Proceeding with temporary cache path...');
+        }
+      }
+
+      await disposeModel();
+
+      try {
+        modelStatus.value = "AI: Loading LLM model into RAM...";
+        print('[LLM] Attempting to load model from: ${modelFile.path}');
+        _llama = LlamaController();
+        await _llama!.loadModel(modelPath: modelFile.path);
+
+        _modelAvailable = true;
+        _modelLoaded = true;
+        _modelPath = modelFile.path;
+        modelStatus.value = "AI: Model Ready (Local AI Active)!";
+        
+        // Invalidate playlist cache to force regeneration with AI now that model is ready
+        _cachedPlaylists = null;
+        _lastPlaylistUpdate = null; // Also clear disk cache date so it forces full regeneration
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.remove(_playlistCachePref);
+          await prefs.remove(_playlistUpdatePref);
+        } catch (_) {}
+        
+        Future.delayed(const Duration(seconds: 3), () {
+          if (modelStatus.value != null && modelStatus.value!.contains('Ready')) {
+            modelStatus.value = null;
+          }
+        });
+        print('[LLM] Model loaded successfully');
+      } catch (e) {
+        final errorStr = e.toString();
+        String userMessage = errorStr;
+
+        if (errorStr.contains('libllama.so') || errorStr.contains('dlopen failed')) {
+          userMessage = 'Native library incompatible. Use physical ARM64 device.';
+        }
+
+        print('[LLM] Error loading model: $userMessage');
+        modelStatus.value = "Error: $userMessage";
+        _modelAvailable = false;
+        _modelLoaded = false;
+        throw Exception(userMessage);
+      }
+    } finally {
+      isModelLoading.value = false;
     }
   }
 
@@ -586,6 +603,16 @@ class LlmService {
     final prompt = _buildRecapPrompt(report, lyricsSnippet);
 
     // 1. Try Local GGUF
+    // Ensure we are truly ready if AI is enabled and model is available
+    if (_isAiEnabled && _modelAvailable) {
+      // If still loading, wait up to 15 more seconds specifically for the model
+      int retry = 0;
+      while (!_modelLoaded && retry < 30 && isModelLoading.value) {
+        await Future.delayed(const Duration(milliseconds: 500));
+        retry++;
+      }
+    }
+
     if (_modelAvailable && _modelLoaded && _llama != null && _isAiEnabled) {
       try {
         modelStatus.value = 'AI: Generating recap on-device...';
@@ -710,7 +737,9 @@ class LlmService {
     try {
       final lower = label.toLowerCase().trim();
       final isAm = lower.contains('am');
-      final num = int.parse(lower.replaceAll(RegExp(r'[^0-9]'), ''));
+      final numStr = lower.replaceAll(RegExp(r'[^0-9]'), '');
+      if (numStr.isEmpty) return 0;
+      final num = int.parse(numStr);
       if (isAm) return num == 12 ? 0 : num;
       return num == 12 ? 12 : num + 12;
     } catch (_) {
@@ -734,12 +763,18 @@ class LlmService {
   // ── SMART PLAYLISTS ───────────────────────────────────────────────────────
 
   Future<List<SmartPlaylistData>> generateSmartPlaylists() async {
-    await _loadFuture;
+    print('[LLM] generateSmartPlaylists() called');
+    
+    // Ensure we wait for any pending model load if AI is enabled
+    if (_isAiEnabled && _loadFuture != null) {
+      await _loadFuture;
+    }
 
     // 1. Try Memory Cache
     if (_cachedPlaylists != null &&
         _lastPlaylistUpdate != null &&
         _isSameDay(_lastPlaylistUpdate!, DateTime.now())) {
+      print('[LLM] Returning memory cached playlists');
       return _cachedPlaylists!;
     }
 
@@ -749,6 +784,7 @@ class LlmService {
       if (_cachedPlaylists != null &&
           _lastPlaylistUpdate != null &&
           _isSameDay(_lastPlaylistUpdate!, DateTime.now())) {
+        print('[LLM] Returning disk cached playlists');
         return _cachedPlaylists!;
       }
     }
@@ -757,8 +793,12 @@ class LlmService {
     final db = DbService.instance;
     final allSongs =
         await db.songs.where().filter().isHiddenEqualTo(false).findAll();
-    if (allSongs.isEmpty) return [];
+    if (allSongs.isEmpty) {
+      print('[LLM] No songs found for curation');
+      return [];
+    }
 
+    print('[LLM] Curation started for ${allSongs.length} songs');
     final genreMap = <String, List<Song>>{};
     for (var s in allSongs) {
       final normalizedGenre = _normalizeGenre(s.genre);
@@ -771,11 +811,11 @@ class LlmService {
       ..sort((a, b) => b.value.length.compareTo(a.value.length));
 
     final List<SmartPlaylistData> result = [];
-    final fallbackNames = {
-      'Pop': 'Pop Pulse',
-      'Rock': 'Rock Ritual',
-      'Jazz': 'Blue Note Lounge',
-      'Lo-fi': 'Bedroom Beats',
+    const fallbackNames = {
+      'Pop': 'Top Hits',
+      'Rock': 'Rock Caviar',
+      'Rap': 'RapCaviar',
+      'Jazz': 'Blue Note',
       'Classical': 'Grand Hall'
     };
 
@@ -787,48 +827,41 @@ class LlmService {
       final genreSongs = sortedGenres[i].value;
       if (genreSongs.length < 3) continue;
 
-      // A. ALGO playlist — strictly genre-locked, standard 20 songs
-      final algoSongs = _curateByScore(genreSongs, '', limit: 20);
-      result.add(SmartPlaylistData(
-        name: fallbackNames[genre] ?? '$genre Vibes',
-        songs: algoSongs,
-        isAiGenerated: false,
-      ));
-
-      // B. AI playlist — Discovery Engine (entire library)
+      // Attempt AI/Algo Hybrid — Discovery Engine
+      bool aiWorked = false;
       if (_modelAvailable && _modelLoaded && _llama != null && _isAiEnabled) {
         try {
           generationProgress.value = 0;
           modelStatus.value = 'AI: Curating $genre session...';
 
-          // Step 1: LLM picks vibe
           final vibeTag = await _askLlmForVibeTag(genre, activityHint);
-
-          // Step 2: Curation with dynamic limit (10-35)
-          final dynamicLimit = 10 + (DateTime.now().millisecond % 26);
-          final aiSongs = _curateByScore(allSongs, vibeTag,
-              targetGenre: genre,
-              limit: dynamicLimit,
-              isAi: true);
-
-          // Step 3: LLM picks name
-          modelStatus.value = 'AI: Naming $genre session...';
-          final aiName = await _generateAiPlaylistName(genre, vibeTag);
-
-          if (aiName.isNotEmpty) {
-            result.add(SmartPlaylistData(
-              name: aiName,
-              songs: aiSongs,
-              isAiGenerated: true,
-            ));
+          if (vibeTag.isNotEmpty) {
+            final dynamicLimit = 15 + (DateTime.now().millisecond % 16);
+            final aiSongs = _curateByScore(allSongs, vibeTag, targetGenre: genre, limit: dynamicLimit, isAi: true);
+            final aiName = await _generateAiPlaylistName(genre, vibeTag);
+            
+            if (aiName.isNotEmpty && aiSongs.isNotEmpty) {
+              result.add(SmartPlaylistData(name: aiName, songs: aiSongs, isAiGenerated: true));
+              aiWorked = true;
+            }
           }
         } catch (e) {
-          print('[LLM] AI playlist error: $e');
+          print('[LLM] AI curation error: $e');
         }
+      }
+
+      // Fallback: ALGO playlist — strictly genre-locked
+      if (!aiWorked) {
+        final algoSongs = _curateByScore(genreSongs, '', limit: 20);
+        result.add(SmartPlaylistData(
+          name: fallbackNames[genre] ?? '$genre Vibes',
+          songs: algoSongs,
+          isAiGenerated: false,
+        ));
       }
     }
 
-    // ── Fallback: mixed ───────────────────────────────────────────────────
+    // ── Final Mixed Fallback ──
     if (result.length < 2 && allSongs.isNotEmpty) {
       final mixed = List<Song>.from(allSongs)..shuffle();
       result.add(SmartPlaylistData(
@@ -840,10 +873,19 @@ class LlmService {
 
     _cachedPlaylists = result;
     _lastPlaylistUpdate = DateTime.now();
-    if (_isAiEnabled && _modelAvailable) {
-      modelStatus.value = 'AI: Curation complete!';
+    
+    // Only save to disk cache if we actually had a model ready or AI is disabled.
+    // This prevents "failing upward" and caching non-AI playlists when the model was just slow to load.
+    if (!_isAiEnabled || _modelLoaded) {
+      await _savePlaylistsToCache();
     }
+
     return result;
+  }
+
+  String _randomColorHex() {
+    const colors = ['#1DB954', '#8E44AD', '#E74C3C', '#E8821A', '#2C3E50', '#1A3A5C', '#2D6A4F', '#5C4A1E'];
+    return colors[DateTime.now().millisecond % colors.length];
   }
 
   /// Asks the LLM for a playlist name given genre + vibe context.
@@ -1093,9 +1135,10 @@ class LlmService {
         // Pattern-completion prompt — examples beat abstract rules on 1B models.
         // Prefix 'The ' puts model directly at the adjective slot.
         final instruction =
-            'Complete the music listener title with ONE adjective and ONE noun. '
+            'Create a unique music listener title with ONE adjective and ONE noun. '
+            'Avoid generic terms like "Nomad" or "Listener". '
             'Genre: $topGenre. Mood: $timeVibe. Loyalty: $loyalty. '
-            'Examples: "Velvet Midnight", "Static Dreamer", "Neon Specter", "Hollow Echo". '
+            'Examples: "Velvet Midnight", "Static Dreamer", "Neon Specter", "Hollow Echo", "Glass Wanderer". '
             'Output ONLY the two words after "The".';
 
         final prompt = _wrapPrompt(instruction, 'The ');
@@ -1155,20 +1198,25 @@ class LlmService {
 
   /// Algo fallback map for personality titles — covers all genre additions.
   String _personalityFallback(String topGenre) {
-    if (topGenre.contains('Lo-fi') || topGenre.contains('Chill')) return 'The Tranquil Soul';
-    if (topGenre.contains('Rock') || topGenre.contains('Metal')) return 'The Sonic Rebel';
-    if (topGenre.contains('Pop')) return 'The Chart Chaser';
-    if (topGenre.contains('Hip Hop') || topGenre.contains('Rap')) return 'The Frequency Rider';
-    if (topGenre.contains('Jazz')) return 'The Midnight Wanderer';
-    if (topGenre.contains('Electronic')) return 'The Neon Nomad';
-    if (topGenre.contains('R&B') || topGenre.contains('Soul')) return 'The Velvet Pulse';
-    if (topGenre.contains('Classical') || topGenre.contains('Orchestral')) return 'The Grand Listener';
-    if (topGenre.contains('Worship') || topGenre.contains('Gospel')) return 'The Spirit Seeker';
-    if (topGenre.contains('Indie')) return 'The Quiet Dreamer';
-    if (topGenre.contains('Drill') || topGenre.contains('Trap')) return 'The Street Poet';
-    if (topGenre.contains('Acoustic') || topGenre.contains('Folk')) return 'The Honest Drifter';
-    if (topGenre.contains('Blues')) return 'The Hollow Soul';
-    return 'The Melodic Nomad';
+    final g = topGenre.toLowerCase();
+    if (g.contains('lo-fi') || g.contains('chill') || g.contains('ambient')) return 'The Tranquil Soul';
+    if (g.contains('rock') || g.contains('metal') || g.contains('punk')) return 'The Sonic Rebel';
+    if (g.contains('pop')) return 'The Chart Chaser';
+    if (g.contains('hip hop') || g.contains('rap') || g.contains('trap')) return 'The Frequency Rider';
+    if (g.contains('jazz') || g.contains('blues')) return 'The Midnight Wanderer';
+    if (g.contains('electronic') || g.contains('techno') || g.contains('house')) return 'The Neon Pulse';
+    if (g.contains('r&b') || g.contains('soul') || g.contains('funk')) return 'The Velvet Groove';
+    if (g.contains('classical') || g.contains('orchestral') || g.contains('piano')) return 'The Grand Listener';
+    if (g.contains('worship') || g.contains('gospel') || g.contains('christian')) return 'The Spirit Seeker';
+    if (g.contains('indie') || g.contains('alt')) return 'The Quiet Dreamer';
+    if (g.contains('drill')) return 'The Street Poet';
+    if (g.contains('acoustic') || g.contains('folk') || g.contains('country')) return 'The Honest Drifter';
+    if (g.contains('k-pop') || g.contains('j-pop')) return 'The Global Fanatic';
+    if (g.contains('dance')) return 'The Rhythm Reactor';
+    
+    // Final fallback — randomize slightly to avoid "stuck" feeling
+    final defaults = ['The Melodic Nomad', 'The Rhythm Voyager', 'The Sonic Architect', 'The Audio Alchemist'];
+    return defaults[DateTime.now().millisecond % defaults.length];
   }
 
   /// Generate a catchy insight about peak listening time

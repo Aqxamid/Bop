@@ -9,6 +9,7 @@ import 'package:just_audio/just_audio.dart';
 import 'package:audio_service/audio_service.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/song.dart';
 import '../models/play_event.dart';
@@ -16,6 +17,7 @@ import '../services/db_service.dart';
 import '../services/metadata_service.dart';
 import '../services/llm_service.dart';
 import 'stats_provider.dart';
+import 'settings_provider.dart';
 
 // ── Player state ──────────────────────────────────────────────
 enum PlayerRepeatMode { off, one, all }
@@ -54,9 +56,10 @@ class PlayerState {
     PlayerRepeatMode? repeatMode,
     String? djTransitionMsg,
     bool clearDjMsg = false,
+    bool clearSong = false,
   }) {
     return PlayerState(
-      currentSong: currentSong ?? this.currentSong,
+      currentSong: clearSong ? null : (currentSong ?? this.currentSong),
       isPlaying: isPlaying ?? this.isPlaying,
       position: position ?? this.position,
       duration: duration ?? this.duration,
@@ -203,27 +206,81 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
   int? _currentPlayEventId;
   DateTime? _playStartTime;
   Timer? _sleepTimer;
+  bool _isGaplessSkipping = false;
 
   StreamSubscription<Duration>? _positionSub;
   StreamSubscription<Duration?>? _durationSub;
   StreamSubscription<PlayerState>? _playerStateSub;
   StreamSubscription<ProcessingState>? _processingSub;
 
-  void _init() {
+  void _init() async {
     // Set up skip callbacks for system notification controls
     audioHandler.setSkipCallbacks(
       onNext: () => skipNext(),
       onPrevious: () => skipPrevious(),
     );
 
-    // Position stream - Throttled to reduce UI rebuild/lag
+    // ── Load persisted state ───────────────────────────
+    final prefs = await SharedPreferences.getInstance();
+    final lastSongId = prefs.getInt('last_song_id');
+    final lastPosMs = prefs.getInt('last_pos_ms') ?? 0;
+    final queueIds = prefs.getStringList('last_queue_ids')?.map(int.parse).toList() ?? [];
+    final lastIndex = prefs.getInt('last_index') ?? 0;
+    final shuffle = prefs.getBool('shuffle_enabled') ?? false;
+    final repeatIdx = prefs.getInt('repeat_mode') ?? 0;
+
+    if (lastSongId != null) {
+      final song = await _db.songs.get(lastSongId);
+      if (song != null) {
+        List<Song> queue = [];
+        if (queueIds.isNotEmpty) {
+          for (final id in queueIds) {
+            final s = await _db.songs.get(id);
+            if (s != null) queue.add(s);
+          }
+        }
+        
+        state = state.copyWith(
+          currentSong: song,
+          position: Duration(milliseconds: lastPosMs),
+          queue: queue,
+          currentIndex: lastIndex,
+          shuffleEnabled: shuffle,
+          repeatMode: PlayerRepeatMode.values[repeatIdx],
+        );
+        
+        // Update notification first so it's ready while loading
+        await audioHandler.updateSongNotification(song);
+
+        // Prepare player but don't play
+        final source = _buildConcatenatingSource(queue, lastIndex, lastPosMs);
+        await _player.setAudioSource(source, initialIndex: lastIndex, initialPosition: Duration(milliseconds: lastPosMs));
+      }
+    }
+
+    // Position stream - Throttled
     _positionSub = _player.positionStream.listen((pos) {
       if (mounted) {
-        // Only update if the song just started or if the position has progressed significantly (e.g., 500ms)
-        // or if we're near the end of the song. This prevents the constant tiny updates from lagging the UI.
         final diff = (pos - state.position).abs();
         if (diff.inMilliseconds >= 500 || pos.inMilliseconds < 500) {
           state = state.copyWith(position: pos);
+          _savePosition(pos.inMilliseconds);
+        }
+
+        // ── Gapless (Early Skip + Crossfade) Logic ──
+        final gaplessEnabled = ref.read(settingsProvider).gaplessPlayback;
+        if (gaplessEnabled && state.duration.inSeconds > 0 && state.currentIndex < state.queue.length - 1) {
+          final gaplessSeconds = ref.read(settingsProvider).gaplessSeconds;
+          final skipThresholdMs = gaplessSeconds * 1000;
+          final triggerMs = skipThresholdMs + 500; // Start fading 500ms before the skip
+          
+          final remainingMs = state.duration.inMilliseconds - pos.inMilliseconds;
+          if (remainingMs > 0 && remainingMs <= triggerMs) {
+            if (!_isGaplessSkipping) {
+              _isGaplessSkipping = true;
+              unawaited(_performGaplessTransition());
+            }
+          }
         }
       }
     });
@@ -242,6 +299,16 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
       }
     });
 
+    // Index stream (for gapless sync)
+    _player.currentIndexStream.listen((index) async {
+      if (mounted && index != null && index != state.currentIndex && index < state.queue.length) {
+        final nextSong = state.queue[index];
+        state = state.copyWith(currentIndex: index, currentSong: nextSong);
+        await audioHandler.updateSongNotification(nextSong);
+        await _logPlayEvent(nextSong);
+      }
+    });
+
     // Playing state
     _player.playingStream.listen((playing) {
       if (mounted) {
@@ -250,26 +317,65 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
     });
   }
 
+  Future<void> _saveState() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (state.currentSong != null) {
+      await prefs.setInt('last_song_id', state.currentSong!.id);
+      await prefs.setStringList('last_queue_ids', state.queue.map((s) => s.id.toString()).toList());
+      await prefs.setInt('last_index', state.currentIndex);
+    }
+    await prefs.setBool('shuffle_enabled', state.shuffleEnabled);
+    await prefs.setInt('repeat_mode', state.repeatMode.index);
+  }
+
+  ConcatenatingAudioSource _buildConcatenatingSource(List<Song> songs, int startIndex, int posMs, {bool gapless = true}) {
+    return ConcatenatingAudioSource(
+      useLazyPreparation: !gapless, // gapless=true → pre-buffer all (no gaps); gapless=false → lazy (normal gaps)
+      children: songs.map((s) {
+        if (s.uri != null && s.uri!.startsWith('content://')) {
+          return AudioSource.uri(Uri.parse(s.uri!));
+        }
+        return AudioSource.file(s.filePath);
+      }).toList(),
+    );
+  }
+
+  Future<void> _savePosition(int ms) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('last_pos_ms', ms);
+  }
+
   // ── Play a single song ────────────────────────────────────
   Future<void> play(Song song) async {
     await _finalizeCurrentPlayEvent(skipped: false);
 
     try {
-      if (song.uri != null && song.uri!.startsWith('content://')) {
-        await _player.setAudioSource(AudioSource.uri(Uri.parse(song.uri!)));
-      } else {
-        await _player.setFilePath(song.filePath);
-      }
+      final fullSong = await _db.songs.get(song.id) ?? song;
       
       state = state.copyWith(
-        currentSong: song,
+        currentSong: fullSong,
         position: Duration.zero,
       );
-      await _player.play();
-      await _logPlayEvent(song);
+      _saveState();
 
-      // Update system notification
-      await audioHandler.updateSongNotification(song);
+      // Update notification first
+      await audioHandler.updateSongNotification(fullSong);
+      
+      // If the song is already the current index in a concatenating source, just seek.
+      // But for simplicity, we often rebuild if it's a "Play this song now" action from outside.
+      // However, if we are playing from a queue, playQueue() handles it.
+      
+      if (state.queue.isNotEmpty && state.queue[state.currentIndex].id == song.id) {
+         await _player.seek(Duration.zero, index: state.currentIndex);
+      } else {
+        // Fallback for single song play
+        final gapless = ref.read(settingsProvider).gaplessPlayback;
+        final source = _buildConcatenatingSource([fullSong], 0, 0, gapless: gapless);
+        await _player.setAudioSource(source);
+      }
+      
+      await _player.play();
+      await _logPlayEvent(fullSong);
     } catch (e) {
       // File may not exist or format unsupported — skip silently
       print('[Player] Playback error: $e');
@@ -278,15 +384,89 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
 
   // ── Play from a queue ─────────────────────────────────────
   Future<void> playQueue(List<Song> songs, {int startIndex = 0}) async {
-    state = state.copyWith(queue: songs, currentIndex: startIndex);
-    if (songs.isNotEmpty) {
-      await play(songs[startIndex]);
+    if (songs.isEmpty) return;
+
+    // ── STEP 1: Set state IMMEDIATELY before any await so that when
+    //            Navigator.push opens NowPlayingScreen synchronously,
+    //            it sees the correct song/index/queue right away.
+    state = state.copyWith(
+      queue: songs,
+      currentIndex: startIndex,
+      currentSong: songs[startIndex],
+      position: Duration.zero,
+    );
+
+    // ── STEP 2: Async cleanup of previous track
+    await _finalizeCurrentPlayEvent(skipped: false);
+
+    // ── STEP 3: Fetch fully-hydrated song data (artBytes, metadata)
+    final List<Song> fullSongs = [];
+    for (final s in songs) {
+      final full = await _db.songs.get(s.id) ?? s;
+      fullSongs.add(full);
     }
+
+    // ── STEP 4: Update state with fully-hydrated songs
+    final startSong = fullSongs[startIndex];
+    state = state.copyWith(
+      queue: fullSongs,
+      currentIndex: startIndex,
+      currentSong: startSong,
+      position: Duration.zero,
+    );
+    _saveState();
+
+    await audioHandler.updateSongNotification(startSong);
+
+    // Build and set the concatenating audio source (gapless or not)
+    final gapless = ref.read(settingsProvider).gaplessPlayback;
+    final source = _buildConcatenatingSource(fullSongs, startIndex, 0, gapless: gapless);
+    await _player.setAudioSource(source, initialIndex: startIndex, initialPosition: Duration.zero);
+    await _player.play();
+    await _logPlayEvent(startSong);
   }
 
   void addToQueue(Song song) {
     final newQueue = List<Song>.from(state.queue)..add(song);
     state = state.copyWith(queue: newQueue);
+    _saveState();
+  }
+
+  void removeFromQueue(int index) {
+    if (index < 0 || index >= state.queue.length) return;
+    final newQueue = List<Song>.from(state.queue);
+    newQueue.removeAt(index);
+    
+    int newIndex = state.currentIndex;
+    if (index < state.currentIndex) {
+      newIndex--;
+    } else if (index == state.currentIndex) {
+      // If we remove the current song, it's tricky. For now just keep index.
+    }
+    
+    state = state.copyWith(queue: newQueue, currentIndex: newIndex);
+    _saveState();
+  }
+
+  void moveQueueItem(int oldIndex, int newIndex) {
+    if (oldIndex < 0 || oldIndex >= state.queue.length) return;
+    if (newIndex < 0 || newIndex >= state.queue.length) return;
+    
+    final newQueue = List<Song>.from(state.queue);
+    final song = newQueue.removeAt(oldIndex);
+    newQueue.insert(newIndex, song);
+    
+    int nextCurrent = state.currentIndex;
+    if (oldIndex == state.currentIndex) {
+      nextCurrent = newIndex;
+    } else if (oldIndex < state.currentIndex && newIndex >= state.currentIndex) {
+      nextCurrent--;
+    } else if (oldIndex > state.currentIndex && newIndex <= state.currentIndex) {
+      nextCurrent++;
+    }
+
+    state = state.copyWith(queue: newQueue, currentIndex: nextCurrent);
+    _saveState();
   }
 
   // ── Pause / Resume / Toggle ───────────────────────────────
@@ -309,66 +489,105 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
 
   Future<void> skipTo(int index) async {
     if (index >= 0 && index < state.queue.length) {
-      state = state.copyWith(currentIndex: index);
-      await play(state.queue[index]);
+      if (index == state.currentIndex) {
+        await _player.seek(Duration.zero);
+      } else {
+        await _player.seek(Duration.zero, index: index);
+      }
+      // state and notification will update via currentIndexStream listener
     }
+  }
+
+  Future<void> stop() async {
+    await _player.stop();
+    state = state.copyWith(clearSong: true, isPlaying: false, position: Duration.zero, queue: []);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('last_song_id');
+    await prefs.remove('last_queue_ids');
+    await _finalizeCurrentPlayEvent(skipped: false);
+  }
+
+  Future<void> shufflePlay(List<Song> songs) async {
+    final shuffled = List<Song>.from(songs)..shuffle();
+    await playQueue(shuffled, startIndex: 0);
+    state = state.copyWith(shuffleEnabled: true);
+    _saveState();
+  }
+
+  // ── Gapless Transition (Crossfade) ────────────────────────
+  Future<void> _performGaplessTransition() async {
+    const fadeOutSteps = 10;
+    const stepDuration = Duration(milliseconds: 50); // 500ms total fade
+
+    // 1. Fade out
+    for (int i = 0; i < fadeOutSteps; i++) {
+      if (!mounted) return;
+      await _player.setVolume(1.0 - (i / fadeOutSteps));
+      await Future.delayed(stepDuration);
+    }
+    await _player.setVolume(0.0);
+    
+    // 2. Skip to next song
+    await skipNext();
+    
+    // 3. Fade in
+    for (int i = 1; i <= fadeOutSteps; i++) {
+      if (!mounted) return;
+      await _player.setVolume(i / fadeOutSteps);
+      await Future.delayed(stepDuration);
+    }
+    await _player.setVolume(1.0);
+    
+    // Cooldown
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) _isGaplessSkipping = false;
+    });
   }
 
   // ── Skip ──────────────────────────────────────────────────
   Future<void> skipNext() async {
-    final wasSkipped = _isSkippedEarly();
-    await _finalizeCurrentPlayEvent(skipped: wasSkipped);
-
-    if (state.queue.isEmpty) return;
-
-    int nextIndex = state.currentIndex + 1;
-
-    if (nextIndex >= state.queue.length) {
+    if (_player.hasNext) {
+      await _player.seekToNext();
+    } else {
       if (state.repeatMode == PlayerRepeatMode.all) {
-        nextIndex = 0;
+        await _player.seek(Duration.zero, index: 0);
       } else {
-        // AI DJ Infinite Queue implementation
+        // AI DJ Infinite Queue
         if (state.currentSong != null) {
           final vibeResult = await LlmService.instance.generateNextVibeSong(state.currentSong!);
           if (vibeResult != null) {
-             final nextSong = vibeResult.key;
-             final transition = vibeResult.value;
-             final newQueue = List<Song>.from(state.queue)..add(nextSong);
-             state = state.copyWith(queue: newQueue, currentIndex: nextIndex, djTransitionMsg: transition);
-             await play(nextSong);
-             return;
+            final nextSong = vibeResult.key;
+            final transition = vibeResult.value;
+            final newQueue = List<Song>.from(state.queue)..add(nextSong);
+            state = state.copyWith(queue: newQueue, djTransitionMsg: transition);
+            
+            // Append to source and let it transition
+            final source = _player.audioSource as ConcatenatingAudioSource?;
+            if (source != null) {
+              await source.add(AudioSource.file(nextSong.filePath));
+              await _player.seekToNext();
+            }
           }
         }
-        return; // End of queue
       }
     }
-
-    state = state.copyWith(currentIndex: nextIndex, clearDjMsg: true);
-    await play(state.queue[nextIndex]);
   }
 
   Future<void> skipPrevious() async {
-    // If more than 3 seconds in, restart current song
     if (state.position.inSeconds > 3) {
       await _player.seek(Duration.zero);
       return;
     }
 
-    await _finalizeCurrentPlayEvent(skipped: false);
-
-    if (state.queue.isEmpty) return;
-
-    int prevIndex = state.currentIndex - 1;
-    if (prevIndex < 0) {
-      if (state.repeatMode == PlayerRepeatMode.all) {
-        prevIndex = state.queue.length - 1;
+    if (_player.hasPrevious) {
+      await _player.seekToPrevious();
+    } else {
+      if (state.repeatMode == PlayerRepeatMode.all && state.queue.isNotEmpty) {
+        await _player.seek(Duration.zero, index: state.queue.length - 1);
       } else {
-        prevIndex = 0;
+        await _player.seek(Duration.zero);
       }
     }
-
-    state = state.copyWith(currentIndex: prevIndex);
-    await play(state.queue[prevIndex]);
   }
 
   // ── Seek ──────────────────────────────────────────────────
@@ -403,20 +622,16 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
   }
 
   // ── Shuffle & Repeat ──────────────────────────────────────
-  void toggleShuffle() {
+  void toggleShuffle() async {
     final enabled = !state.shuffleEnabled;
     state = state.copyWith(shuffleEnabled: enabled);
-
-    if (enabled && state.queue.length > 1) {
-      final current = state.currentSong;
-      final shuffled = List<Song>.from(state.queue)..shuffle();
-      // Move current song to front
-      if (current != null) {
-        shuffled.remove(current);
-        shuffled.insert(0, current);
-      }
-      state = state.copyWith(queue: shuffled, currentIndex: 0);
+    
+    await _player.setShuffleModeEnabled(enabled);
+    if (enabled) {
+      await _player.shuffle();
     }
+    
+    _saveState();
   }
 
   void toggleRepeat() {
@@ -424,6 +639,7 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
     final nextIndex =
         (modes.indexOf(state.repeatMode) + 1) % modes.length;
     state = state.copyWith(repeatMode: modes[nextIndex]);
+    _saveState();
   }
 
   void setSleepTimer(int minutes) {
@@ -465,15 +681,22 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
     await _finalizeCurrentPlayEvent(skipped: false);
 
     if (state.repeatMode == PlayerRepeatMode.one) {
-      // Replay same track
       await _player.seek(Duration.zero);
       await _player.play();
       return;
     }
 
-    if (state.currentIndex < state.queue.length - 1) {
-      await skipNext();
+    // Strict Loop/Repeat Off enforcement
+    if (state.repeatMode == PlayerRepeatMode.off && state.currentIndex >= state.queue.length - 1) {
+      // Check if AI is enabled for auto-extension
+      final aiEnabled = ref.read(settingsProvider).aiEnabled;
+      if (!aiEnabled) {
+        await pause();
+        return;
+      }
     }
+
+    await skipNext();
   }
 
   // ── PlayEvent logging ─────────────────────────────────────

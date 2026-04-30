@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../theme/app_theme.dart';
 import '../../providers/stats_provider.dart';
 import '../../services/wrapped_generator.dart';
+import '../../services/llm_service.dart';
 import '../wrapped/wrapped_slideshow_screen.dart';
 import '../../widgets/mini_player.dart';
 
@@ -27,40 +28,35 @@ class _StatsScreenState extends ConsumerState<StatsScreen> {
     final heatmap = ref.watch(heatmapProvider);
     final genres = ref.watch(genreBreakdownProvider);
 
-    return Column(
+    return ListView(
+      padding: EdgeInsets.fromLTRB(16, MediaQuery.of(context).padding.top + 8, 16, 120),
       children: [
-        Expanded(
-          child: ListView(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
-            children: [
-              const SizedBox(height: 16),
+
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text('Your Stats',
-                      style: Theme.of(context)
-                          .textTheme
-                          .headlineMedium
-                          ?.copyWith(fontSize: 20)),
+                  const Text('Your Stats',
+                      style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w900)),
                   _PeriodToggle(
                     current: ref.watch(statsPeriodProvider),
                     onChanged: (p) => ref.read(statsPeriodProvider.notifier).state = p,
                   ),
                 ],
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
               _RecapTriggerCard(
                 generating: _generating,
                 onTap: _generateRecap,
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
               GridView.count(
                 shrinkWrap: true,
+                padding: EdgeInsets.zero,
                 physics: const NeverScrollableScrollPhysics(),
                 crossAxisCount: 2,
                 mainAxisSpacing: 10,
                 crossAxisSpacing: 10,
-                childAspectRatio: 1.4,
+                childAspectRatio: 2.2,
                 children: [
                   _StatCard(
                     label: 'Minutes',
@@ -104,7 +100,7 @@ class _StatsScreenState extends ConsumerState<StatsScreen> {
                   ),
                 ],
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 4),
               Text('Top artists this month',
                   style: Theme.of(context)
                       .textTheme
@@ -134,7 +130,7 @@ class _StatsScreenState extends ConsumerState<StatsScreen> {
                 loading: () => const Center(child: CircularProgressIndicator()),
                 error: (_, __) => const Text('Error loading data'),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 2),
               Text('When you listen',
                   style: Theme.of(context)
                       .textTheme
@@ -149,13 +145,13 @@ class _StatsScreenState extends ConsumerState<StatsScreen> {
                 loading: () => const Center(child: CircularProgressIndicator()),
                 error: (_, __) => const Text('Error loading data'),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 8),
               Text('Genre breakdown',
                   style: Theme.of(context)
                       .textTheme
                       .titleSmall
                       ?.copyWith(fontWeight: FontWeight.w700)),
-              const SizedBox(height: 10),
+              const SizedBox(height: 0),
               genres.when(
                 data: (genreMap) {
                   if (genreMap.isEmpty) return const Text('No genre data yet');
@@ -188,11 +184,6 @@ class _StatsScreenState extends ConsumerState<StatsScreen> {
                 loading: () => const Center(child: CircularProgressIndicator()),
                 error: (_, __) => const Text('Error loading data'),
               ),
-              const SizedBox(height: 100),
-            ],
-          ),
-        ),
-        const MiniPlayer(),
       ],
     );
   }
@@ -238,6 +229,13 @@ class _StatsScreenState extends ConsumerState<StatsScreen> {
           : await WrappedGenerator.instance.generate(targetYear, targetMonth);
 
       if (mounted) {
+        // Double check recap is there if AI is enabled
+        if (report.llmRecap.isEmpty && LlmService.instance.isAiEnabled) {
+          // One final attempt if something went wrong
+          final recap = await LlmService.instance.generateWrappedRecap(report);
+          report.llmRecap = recap;
+        }
+        
         Navigator.push(context, MaterialPageRoute(builder: (_) => WrappedSlideshowScreen(report: report)));
       }
     } finally {

@@ -184,7 +184,6 @@ class DbService {
         .song((q) => q.isHiddenEqualTo(false))
         .findAll();
 
-    // Map title/artist combo to count to handle cases where songs might have been deleted/re-indexed
     final counts = <String, int>{}; 
     for (final e in events) {
       final key = "${e.songTitle}|${e.artist}";
@@ -194,15 +193,19 @@ class DbService {
     final sortedKeys = counts.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
     
+    final topKeys = sortedKeys.take(limit).toList();
+    if (topKeys.isEmpty) return [];
+
+    // Pre-fetch all songs in the library to match against fingerprints
+    final allSongs = await songs.where().findAll();
     final result = <MapEntry<Song, int>>[];
-    for (final entry in sortedKeys) {
-      if (result.length >= limit) break;
-      
+
+    for (final entry in topKeys) {
       final parts = entry.key.split('|');
       final title = parts[0];
       final artist = parts[1];
       
-      final song = await songs.filter().titleEqualTo(title).and().artistEqualTo(artist).findFirst();
+      final song = allSongs.where((s) => s.title == title && s.artist == artist).firstOrNull;
       if (song != null) {
         result.add(MapEntry(song, entry.value));
       }

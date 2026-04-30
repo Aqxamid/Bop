@@ -28,6 +28,8 @@ enum LibraryFilter { all, playlists, artists, albums }
 final libraryFilterProvider = StateProvider<LibraryFilter>((ref) => LibraryFilter.all);
 final librarySelectionProvider = StateProvider<Set<int>>((ref) => {});
 final libraryPlaylistSelectionProvider = StateProvider<Set<int>>((ref) => {});
+final selectionActiveProvider = StateProvider<bool>((ref) => false);
+final playlistSelectionActiveProvider = StateProvider<bool>((ref) => false);
 
 class LibraryScreen extends ConsumerWidget {
   const LibraryScreen({super.key});
@@ -36,406 +38,398 @@ class LibraryScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final likedSongs = ref.watch(likedSongsProvider);
     final allSongs = ref.watch(allSongsProvider);
+    final filter = ref.watch(libraryFilterProvider);
     final selection = ref.watch(librarySelectionProvider);
     final playlistSelection = ref.watch(libraryPlaylistSelectionProvider);
-    final filter = ref.watch(libraryFilterProvider);
-    final inSelectionMode = selection.isNotEmpty;
-    final inPlaylistSelectionMode = playlistSelection.isNotEmpty;
+    final inSelectionMode = ref.watch(selectionActiveProvider) || selection.isNotEmpty;
+    final inPlaylistSelectionMode = ref.watch(playlistSelectionActiveProvider) || playlistSelection.isNotEmpty;
 
-    return Column(
-      children: [
-        Expanded(
-          child: CustomScrollView(
-            slivers: [
-              SliverPadding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                sliver: SliverToBoxAdapter(
-                  child: Column(
+    return CustomScrollView(
+      slivers: [
+        SliverToBoxAdapter(child: SizedBox(height: MediaQuery.of(context).padding.top + 8)),
+        SliverPadding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          sliver: SliverToBoxAdapter(
+            child: Column(
+              children: [
+                // ── Header + selection actions ──────
+                if (inSelectionMode && filter != LibraryFilter.playlists)
+                  _SelectionHeader(
+                    count: selection.length,
+                    onClear: () {
+                      ref.read(librarySelectionProvider.notifier).state = {};
+                      ref.read(selectionActiveProvider.notifier).state = false;
+                    },
+                    onAutoFill: () => _showBulkAutoFillDialog(context, ref, selection.toList()),
+                    onAddToPlaylist: () => _showMultiPlaylistSelector(context, ref, selection.toList()),
+                    onDelete: () async {
+                      final confirm = await _showBulkRemoveDialog(context, selection.length);
+                      if (confirm == true) {
+                        final ids = selection.toList();
+                        for (final id in ids) {
+                          await DbService.instance.hideSong(id);
+                          ref.read(playerProvider.notifier).removeSong(id);
+                        }
+                        ref.read(librarySelectionProvider.notifier).state = {};
+                        ref.invalidate(allSongsProvider);
+                        ref.invalidate(likedSongsProvider);
+                        ref.invalidate(recentSongsProvider);
+                      }
+                    },
+                  )
+                else if (inPlaylistSelectionMode && filter == LibraryFilter.playlists)
+                  _SelectionHeader(
+                    count: playlistSelection.length,
+                    onClear: () {
+                      ref.read(libraryPlaylistSelectionProvider.notifier).state = {};
+                      ref.read(playlistSelectionActiveProvider.notifier).state = false;
+                    },
+                    onDelete: () async {
+                      final confirm = await _showBulkRemoveDialog(context, playlistSelection.length, isPlaylist: true);
+                      if (confirm == true) {
+                        for (final id in playlistSelection) {
+                          await DbService.instance.deletePlaylist(id);
+                        }
+                        ref.read(libraryPlaylistSelectionProvider.notifier).state = {};
+                      }
+                    },
+                  )
+                else
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const SizedBox(height: 16),
-                      // ── Header + selection actions ──────
-                      if (inSelectionMode && filter != LibraryFilter.playlists)
-                        _SelectionHeader(
-                          count: selection.length,
-                          onClear: () => ref.read(librarySelectionProvider.notifier).state = {},
-                          onAutoFill: () => _showBulkAutoFillDialog(context, ref, selection.toList()),
-                          onAddToPlaylist: () => _showMultiPlaylistSelector(context, ref, selection.toList()),
-                          onDelete: () async {
-                            final confirm = await _showBulkRemoveDialog(context, selection.length);
-                            if (confirm == true) {
-                              final ids = selection.toList();
-                              for (final id in ids) {
-                                final s = await DbService.instance.songs.get(id);
-                                if (s != null) {
-                                  try {
-                                    final f = File(s.filePath);
-                                    if (f.existsSync()) f.deleteSync();
-                                  } catch (_) {}
-                                }
-                                await DbService.instance.deleteSong(id);
-                                ref.read(playerProvider.notifier).removeSong(id);
+                      Text('Your Library',
+                          style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w900)),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.add, color: BopTheme.textSecondary),
+                            tooltip: 'Create Playlist',
+                            onPressed: () => _showCreatePlaylistDialog(context),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.edit_note, color: BopTheme.textSecondary),
+                            tooltip: 'Bulk Genre Management',
+                            onPressed: () => _showBulkGenreEditor(context, ref),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.edit_outlined, color: BopTheme.textSecondary),
+                            tooltip: 'Edit / Select',
+                            onPressed: () {
+                              if (ref.read(libraryFilterProvider) == LibraryFilter.playlists) {
+                                ref.read(playlistSelectionActiveProvider.notifier).state = true;
+                              } else {
+                                ref.read(selectionActiveProvider.notifier).state = true;
                               }
-                              ref.read(librarySelectionProvider.notifier).state = {};
-                              ref.invalidate(allSongsProvider);
-                              ref.invalidate(likedSongsProvider);
-                              ref.invalidate(recentSongsProvider);
-                            }
-                          },
-                        )
-                      else if (inPlaylistSelectionMode && filter == LibraryFilter.playlists)
-                        _SelectionHeader(
-                          count: playlistSelection.length,
-                          onClear: () => ref.read(libraryPlaylistSelectionProvider.notifier).state = {},
-                          onDelete: () async {
-                            final confirm = await _showBulkRemoveDialog(context, playlistSelection.length, isPlaylist: true);
-                            if (confirm == true) {
-                              for (final id in playlistSelection) {
-                                await DbService.instance.deletePlaylist(id);
-                              }
-                              ref.read(libraryPlaylistSelectionProvider.notifier).state = {};
-                            }
-                          },
-                        )
-                      else
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text('Your Library',
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .headlineMedium
-                                    ?.copyWith(fontSize: 20)),
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                IconButton(
-                                  icon: const Icon(Icons.add, color: BopTheme.textSecondary),
-                                  tooltip: 'Create Playlist',
-                                  onPressed: () => _showCreatePlaylistDialog(context),
-                                ),
-                                IconButton(
-                                  icon: const Icon(Icons.refresh, color: BopTheme.textSecondary),
-                                  tooltip: 'Rescan Device',
-                                  onPressed: () => _showRescanDialog(context, ref),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-
-                      // ── Filter chips ──────────────────────
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 8.0),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            _FilterChip(
-                              'All Songs',
-                              filter == LibraryFilter.all,
-                              () {
-                                ref.read(libraryFilterProvider.notifier).state = LibraryFilter.all;
-                                ref.read(librarySelectionProvider.notifier).state = {};
-                              },
-                            ),
-                            const SizedBox(width: 8),
-                            _FilterChip(
-                              'Playlists',
-                              filter == LibraryFilter.playlists,
-                              () {
-                                ref.read(libraryFilterProvider.notifier).state = LibraryFilter.playlists;
-                                ref.read(librarySelectionProvider.notifier).state = {};
-                              },
-                            ),
-                            const SizedBox(width: 8),
-                            _FilterChip(
-                              'Artists',
-                              filter == LibraryFilter.artists,
-                              () {
-                                ref.read(libraryFilterProvider.notifier).state = LibraryFilter.artists;
-                                ref.read(librarySelectionProvider.notifier).state = {};
-                              },
-                            ),
-                            const SizedBox(width: 8),
-                            _FilterChip(
-                              'Albums',
-                              filter == LibraryFilter.albums,
-                              () {
-                                ref.read(libraryFilterProvider.notifier).state = LibraryFilter.albums;
-                                ref.read(librarySelectionProvider.notifier).state = {};
-                              },
-                            ),
-                          ],
-                        ),
+                            },
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.refresh, color: BopTheme.textSecondary),
+                            tooltip: 'Rescan Device',
+                            onPressed: () => _showRescanDialog(context, ref),
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 12),
+                    ],
+                  ),
 
-                      // ── Liked Songs shortcut ──────────────
-                      likedSongs.when(
-                        data: (songs) => _LikedSongsTile(
-                          count: songs.length,
-                          onTap: () {
-                            if (songs.isNotEmpty) {
-                              ref.read(playerProvider.notifier).playQueue(songs);
-                            }
-                          },
-                        ),
-                        loading: () => _LikedSongsTile(count: 0, onTap: () {}),
-                        error: (_, __) => _LikedSongsTile(count: 0, onTap: () {}),
+                // ── Filter chips ──────────────────────
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8.0),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      _FilterChip(
+                        'All Songs',
+                        filter == LibraryFilter.all,
+                        () {
+                          ref.read(libraryFilterProvider.notifier).state = LibraryFilter.all;
+                          ref.read(librarySelectionProvider.notifier).state = {};
+                        },
                       ),
-                      const Divider(height: 1),
+                      const SizedBox(width: 8),
+                      _FilterChip(
+                        'Playlists',
+                        filter == LibraryFilter.playlists,
+                        () {
+                          ref.read(libraryFilterProvider.notifier).state = LibraryFilter.playlists;
+                          ref.read(librarySelectionProvider.notifier).state = {};
+                        },
+                      ),
+                      const SizedBox(width: 8),
+                      _FilterChip(
+                        'Artists',
+                        filter == LibraryFilter.artists,
+                        () {
+                          ref.read(libraryFilterProvider.notifier).state = LibraryFilter.artists;
+                          ref.read(librarySelectionProvider.notifier).state = {};
+                        },
+                      ),
+                      const SizedBox(width: 8),
+                      _FilterChip(
+                        'Albums',
+                        filter == LibraryFilter.albums,
+                        () {
+                          ref.read(libraryFilterProvider.notifier).state = LibraryFilter.albums;
+                          ref.read(librarySelectionProvider.notifier).state = {};
+                        },
+                      ),
                     ],
                   ),
                 ),
-              ),
+                const SizedBox(height: 12),
 
-              // ── All Songs / Playlists list (lazy) ──────────
-              if (filter == LibraryFilter.playlists)
-                ref.watch(playlistsStreamProvider).when(
-                  data: (list) => SliverPadding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    sliver: SliverList.builder(
-                      itemCount: list.length,
-                      itemBuilder: (_, i) {
-                        final p = list[i];
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 8),
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: playlistSelection.contains(p.id) ? BopTheme.green.withOpacity(0.1) : Colors.transparent,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: ListTile(
-                              leading: PlaylistCoverWidget(playlist: p, size: 48),
-                              title: Text(p.name, style: const TextStyle(color: Colors.white)),
-                              subtitle: Text('${p.songs.length} songs',
-                                  style: const TextStyle(color: BopTheme.textSecondary, fontSize: 12)),
-                              trailing: inPlaylistSelectionMode
-                                  ? Icon(
-                                      playlistSelection.contains(p.id) ? Icons.check_circle : Icons.radio_button_unchecked,
-                                      color: playlistSelection.contains(p.id) ? BopTheme.green : BopTheme.textSecondary,
-                                      size: 20,
-                                    )
-                                  : null,
-                              onTap: () {
-                                if (inPlaylistSelectionMode) {
-                                  final newSet = Set<int>.from(playlistSelection);
-                                  if (newSet.contains(p.id)) {
-                                    newSet.remove(p.id);
-                                  } else {
-                                    newSet.add(p.id);
-                                  }
-                                  ref.read(libraryPlaylistSelectionProvider.notifier).state = newSet;
-                                } else {
-                                  showPlaylistDetails(context, ref, p);
-                                }
-                              },
-                              onLongPress: () {
-                                if (!inPlaylistSelectionMode) {
-                                  ref.read(libraryPlaylistSelectionProvider.notifier).state = {p.id};
-                                }
-                              },
-                            ),
-                          ),
-                        );
-                      },
+                // ── Liked Songs shortcut ──────────────
+                likedSongs.when(
+                  data: (songs) => _LikedSongsTile(
+                    count: songs.length,
+                    onTap: () {
+                      if (songs.isNotEmpty) {
+                        ref.read(playerProvider.notifier).playQueue(songs);
+                      }
+                    },
+                  ),
+                  loading: () => _LikedSongsTile(count: 0, onTap: () {}),
+                  error: (_, __) => _LikedSongsTile(count: 0, onTap: () {}),
+                ),
+                const Divider(height: 1, color: Colors.white10),
+                const SizedBox(height: 12),
+              ],
+            ),
+          ),
+        ),
+
+        // ── All Songs / Playlists list (lazy) ──────────
+        if (filter == LibraryFilter.playlists)
+          ref.watch(playlistsStreamProvider).when(
+            data: (list) => SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (context, i) {
+                  final p = list[i];
+                  final isSelected = playlistSelection.contains(p.id);
+                  return ListTile(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                    leading: PlaylistCoverWidget(playlist: p, size: 52),
+                    title: Text(p.name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14)),
+                    subtitle: Text('Playlist • ${p.songs.length} songs', style: const TextStyle(color: BopTheme.textSecondary, fontSize: 12)),
+                    trailing: inPlaylistSelectionMode
+                        ? Icon(
+                            isSelected ? Icons.check_circle : Icons.radio_button_unchecked,
+                            color: isSelected ? BopTheme.green : BopTheme.textSecondary,
+                            size: 24,
+                          )
+                        : const Icon(Icons.chevron_right, color: BopTheme.textSecondary),
+                    onTap: () {
+                      if (inPlaylistSelectionMode) {
+                        final newSelection = Set<int>.from(playlistSelection);
+                        if (isSelected) newSelection.remove(p.id);
+                        else newSelection.add(p.id);
+                        ref.read(libraryPlaylistSelectionProvider.notifier).state = newSelection;
+                      } else {
+                        showPlaylistDetails(context, ref, p);
+                      }
+                    },
+                    onLongPress: () {
+                      if (!inPlaylistSelectionMode) {
+                        ref.read(playlistSelectionActiveProvider.notifier).state = true;
+                        ref.read(libraryPlaylistSelectionProvider.notifier).state = {p.id};
+                      }
+                    },
+                  );
+                },
+                childCount: list.length,
+              ),
+            ),
+            loading: () => const SliverToBoxAdapter(
+              child: Center(child: CircularProgressIndicator()),
+            ),
+            error: (_, __) => const SliverToBoxAdapter(
+              child: Text('Error loading playlists', style: TextStyle(color: Colors.red)),
+            ),
+          )
+        else
+          allSongs.when(
+            data: (songs) {
+              if (songs.isEmpty) {
+                return const SliverToBoxAdapter(
+                  child: Padding(
+                    padding: EdgeInsets.all(32),
+                    child: Center(
+                      child: Text(
+                        'No songs found.\nScan your device from the home screen.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: BopTheme.textMuted),
+                      ),
                     ),
                   ),
-                  loading: () => const SliverToBoxAdapter(
-                    child: Center(child: CircularProgressIndicator()),
-                  ),
-                  error: (_, __) => const SliverToBoxAdapter(
-                    child: Text('Error loading playlists', style: TextStyle(color: Colors.red)),
-                  ),
-                )
-              else
-                allSongs.when(
-                  data: (songs) {
-                    if (songs.isEmpty) {
-                      return const SliverToBoxAdapter(
-                        child: Padding(
-                          padding: EdgeInsets.all(32),
-                          child: Center(
-                            child: Text(
-                              'No songs found.\nScan your device from the home screen.',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(color: BopTheme.textMuted),
+                );
+              }
+
+              if (filter == LibraryFilter.artists) {
+                final artistMapping = <String, List<Song>>{};
+                for (final s in songs) {
+                  artistMapping.putIfAbsent(s.artist, () => []).add(s);
+                }
+                final artistsList = artistMapping.entries.toList()
+                  ..sort((a, b) => a.key.compareTo(b.key));
+                  
+                return SliverPadding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  sliver: SliverList.builder(
+                    itemCount: artistsList.length,
+                    itemBuilder: (_, i) {
+                      final artist = artistsList[i].key;
+                      final artistSongs = artistsList[i].value;
+                      final artSong = artistSongs.cast<Song?>().firstWhere(
+                        (s) => s!.artBytes != null && s.artBytes!.isNotEmpty,
+                        orElse: () => null,
+                      );
+                      
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: ListTile(
+                          leading: Container(
+                            width: 48, height: 48,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: BopTheme.surfaceAlt,
+                              image: artSong?.artBytes != null && artSong!.artBytes!.isNotEmpty
+                                ? DecorationImage(
+                                    image: ResizeImage(MemoryImage(Uint8List.fromList(artSong.artBytes!)), width: 100, height: 100), 
+                                    fit: BoxFit.cover
+                                  )
+                                : null,
                             ),
+                            child: artSong?.artBytes == null || artSong!.artBytes!.isEmpty
+                              ? const Icon(Icons.person, color: Colors.white54)
+                              : null,
                           ),
-                        ),
-                      );
-                    }
-
-                    if (filter == LibraryFilter.artists) {
-                      final artistMapping = <String, List<Song>>{};
-                      for (final s in songs) {
-                        artistMapping.putIfAbsent(s.artist, () => []).add(s);
-                      }
-                      final artistsList = artistMapping.entries.toList()
-                        ..sort((a, b) => a.key.compareTo(b.key));
-                        
-                      return SliverPadding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        sliver: SliverList.builder(
-                          itemCount: artistsList.length,
-                          itemBuilder: (_, i) {
-                            final artist = artistsList[i].key;
-                            final artistSongs = artistsList[i].value;
-                            final artSong = artistSongs.cast<Song?>().firstWhere(
-                              (s) => s!.artBytes != null && s.artBytes!.isNotEmpty,
-                              orElse: () => null,
-                            );
-                            
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 8),
-                              child: ListTile(
-                                leading: Container(
-                                  width: 48, height: 48,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: BopTheme.surfaceAlt,
-                                    image: artSong?.artBytes != null && artSong!.artBytes!.isNotEmpty
-                                      ? DecorationImage(
-                                          image: ResizeImage(MemoryImage(Uint8List.fromList(artSong.artBytes!)), width: 100, height: 100), 
-                                          fit: BoxFit.cover
-                                        )
-                                      : null,
-                                  ),
-                                  child: artSong?.artBytes == null || artSong!.artBytes!.isEmpty
-                                    ? const Icon(Icons.person, color: Colors.white54)
-                                    : null,
-                                ),
-                                title: Text(artist, style: const TextStyle(color: Colors.white)),
-                                subtitle: Text('${artistSongs.length} songs', style: const TextStyle(color: BopTheme.textSecondary, fontSize: 12)),
-                                onTap: () {
-                                  Navigator.push(context, MaterialPageRoute(builder: (_) => ArtistScreen(artistName: artist)));
-                                },
-                              ),
-                            );
+                          title: Text(artist, style: const TextStyle(color: Colors.white)),
+                          subtitle: Text('${artistSongs.length} songs', style: const TextStyle(color: BopTheme.textSecondary, fontSize: 12)),
+                          onTap: () {
+                            Navigator.push(context, MaterialPageRoute(builder: (_) => ArtistScreen(artistName: artist)));
                           },
                         ),
                       );
-                    }
+                    },
+                  ),
+                );
+              }
 
-                    if (filter == LibraryFilter.albums) {
-                      final albumMapping = <String, List<Song>>{};
-                      for (final s in songs) {
-                        albumMapping.putIfAbsent(s.album, () => []).add(s);
-                      }
-                      final albumsList = albumMapping.entries.toList()
-                        ..sort((a, b) => a.key.compareTo(b.key));
-                        
-                      return SliverPadding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        sliver: SliverList.builder(
-                          itemCount: albumsList.length,
-                          itemBuilder: (_, i) {
-                            final album = albumsList[i].key;
-                            final albumSongs = albumsList[i].value;
-                            final artist = albumSongs.first.artist;
-                            final artSong = albumSongs.cast<Song?>().firstWhere(
-                              (s) => s!.artBytes != null && s.artBytes!.isNotEmpty,
-                              orElse: () => null,
-                            );
-                            
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 8),
-                              child: ListTile(
-                                leading: Container(
-                                  width: 48, height: 48,
-                                  decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(4),
-                                    color: BopTheme.surfaceAlt,
-                                    image: artSong?.artBytes != null && artSong!.artBytes!.isNotEmpty
-                                      ? DecorationImage(
-                                          image: ResizeImage(MemoryImage(Uint8List.fromList(artSong.artBytes!)), width: 100, height: 100), 
-                                          fit: BoxFit.cover
-                                        )
-                                      : null,
-                                  ),
-                                  child: artSong?.artBytes == null || artSong!.artBytes!.isEmpty
-                                    ? const Icon(Icons.album, color: Colors.white54)
-                                    : null,
-                                ),
-                                title: Text(album, style: const TextStyle(color: Colors.white)),
-                                subtitle: Text(artist, style: const TextStyle(color: BopTheme.textSecondary, fontSize: 12)),
-                                onTap: () {
-                                  Navigator.push(context, MaterialPageRoute(builder: (_) => AlbumScreen(albumName: album, artist: artist)));
-                                },
-                              ),
-                            );
-                          },
-                        ),
+              if (filter == LibraryFilter.albums) {
+                final albumMapping = <String, List<Song>>{};
+                for (final s in songs) {
+                  albumMapping.putIfAbsent(s.album, () => []).add(s);
+                }
+                final albumsList = albumMapping.entries.toList()
+                  ..sort((a, b) => a.key.compareTo(b.key));
+                  
+                return SliverPadding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  sliver: SliverList.builder(
+                    itemCount: albumsList.length,
+                    itemBuilder: (_, i) {
+                      final album = albumsList[i].key;
+                      final albumSongs = albumsList[i].value;
+                      final artist = albumSongs.first.artist;
+                      final artSong = albumSongs.cast<Song?>().firstWhere(
+                        (s) => s!.artBytes != null && s.artBytes!.isNotEmpty,
+                        orElse: () => null,
                       );
-                    }
-
-                    final filteredSongs = songs;
-
-                    return SliverPadding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      sliver: SliverList.builder(
-                        itemCount: filteredSongs.length,
-                        itemBuilder: (_, i) {
-                          final song = filteredSongs[i];
-                          final isSelected = selection.contains(song.id);
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
-                            child: _SongTile(
-                              song: song,
-                              isSelected: isSelected,
-                              inSelectionMode: inSelectionMode,
-                              onTap: () {
-                                if (inSelectionMode) {
-                                  final newSet = Set<int>.from(selection);
-                                  if (isSelected) {
-                                    newSet.remove(song.id);
-                                  } else {
-                                    newSet.add(song.id);
-                                  }
-                                  ref.read(librarySelectionProvider.notifier).state = newSet;
-                                } else {
-                                  ref.read(playerProvider.notifier).playQueue(
-                                    filteredSongs,
-                                    startIndex: i,
-                                  );
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) => NowPlayingScreen(song: song),
-                                    ),
-                                  );
-                                }
-                              },
-                              onLongPress: () {
-                                if (!inSelectionMode) {
-                                  ref.read(librarySelectionProvider.notifier).state = {song.id};
-                                }
-                              },
+                      
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: ListTile(
+                          leading: Container(
+                            width: 48, height: 48,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(4),
+                              color: BopTheme.surfaceAlt,
+                              image: artSong?.artBytes != null && artSong!.artBytes!.isNotEmpty
+                                ? DecorationImage(
+                                    image: ResizeImage(MemoryImage(Uint8List.fromList(artSong.artBytes!)), width: 100, height: 100), 
+                                    fit: BoxFit.cover
+                                  )
+                                : null,
                             ),
-                          );
+                            child: artSong?.artBytes == null || artSong!.artBytes!.isEmpty
+                              ? const Icon(Icons.album, color: Colors.white54)
+                              : null,
+                          ),
+                          title: Text(album, style: const TextStyle(color: Colors.white)),
+                          subtitle: Text(artist, style: const TextStyle(color: BopTheme.textSecondary, fontSize: 12)),
+                          onTap: () {
+                            Navigator.push(context, MaterialPageRoute(builder: (_) => AlbumScreen(albumName: album, artist: artist)));
+                          },
+                        ),
+                      );
+                    },
+                  ),
+                );
+              }
+
+              final filteredSongs = songs;
+
+              return SliverPadding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                sliver: SliverList.builder(
+                  itemCount: filteredSongs.length,
+                  itemBuilder: (_, i) {
+                    final song = filteredSongs[i];
+                    final isSelected = selection.contains(song.id);
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: _SongTile(
+                        song: song,
+                        isSelected: isSelected,
+                        inSelectionMode: inSelectionMode,
+                        onTap: () {
+                          if (inSelectionMode) {
+                            final newSet = Set<int>.from(selection);
+                            if (isSelected) {
+                              newSet.remove(song.id);
+                            } else {
+                              newSet.add(song.id);
+                            }
+                            ref.read(librarySelectionProvider.notifier).state = newSet;
+                          } else {
+                            ref.read(playerProvider.notifier).playQueue(
+                              filteredSongs,
+                              startIndex: i,
+                            );
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => NowPlayingScreen(song: song),
+                              ),
+                            );
+                          }
+                        },
+                        onLongPress: () {
+                          if (!inSelectionMode) {
+                            ref.read(selectionActiveProvider.notifier).state = true;
+                            ref.read(librarySelectionProvider.notifier).state = {song.id};
+                          }
                         },
                       ),
                     );
                   },
-                  loading: () => const SliverToBoxAdapter(
-                    child: Center(
-                      child: Padding(
-                        padding: EdgeInsets.all(32),
-                        child: CircularProgressIndicator(),
-                      ),
-                    ),
-                  ),
-                  error: (_, __) => const SliverToBoxAdapter(
-                    child: Text('Error loading library'),
-                  ),
                 ),
-
-              const SliverToBoxAdapter(
-                child: SizedBox(height: 100),
+              );
+            },
+            loading: () => const SliverToBoxAdapter(
+              child: Center(
+                child: Padding(
+                  padding: EdgeInsets.all(32),
+                  child: CircularProgressIndicator(),
+                ),
               ),
-            ],
+            ),
+            error: (_, __) => const SliverToBoxAdapter(
+              child: Text('Error loading library'),
+            ),
           ),
-        ),
-        const MiniPlayer(),
       ],
     );
   }
@@ -679,7 +673,7 @@ Future<bool?> _showBulkRemoveDialog(BuildContext context, int count, {bool isPla
       content: Text(
           isPlaylist 
               ? 'This will permanently delete the selected playlists from your library.'
-              : 'This will permanently delete the selected files from your device and library.',
+              : 'This will hide these songs from your library. They will NOT be re-scanned unless you reset your database.',
           style: const TextStyle(color: Colors.white70)),
       actions: [
         TextButton(
@@ -688,7 +682,7 @@ Future<bool?> _showBulkRemoveDialog(BuildContext context, int count, {bool isPla
         ),
         TextButton(
           onPressed: () => Navigator.pop(ctx, true),
-          child: const Text('Remove', style: TextStyle(color: BopTheme.red)),
+          child: Text(isPlaylist ? 'Delete' : 'Hide', style: TextStyle(color: isPlaylist ? BopTheme.red : BopTheme.green)),
         ),
       ],
     ),
@@ -712,6 +706,25 @@ Future<void> _showBulkAutoFillDialog(BuildContext context, WidgetRef ref, List<i
   }
 }
 
+Future<void> _showMultiPlaylistSelector(BuildContext context, WidgetRef ref, List<int> songIds) async {
+  final List<Song> selectedSongs = [];
+  for (final id in songIds) {
+    final s = await DbService.instance.songs.get(id);
+    if (s != null) selectedSongs.add(s);
+  }
+
+  if (context.mounted && selectedSongs.isNotEmpty) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF282828),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) => PlaylistSelector.multiple(songs: selectedSongs),
+    );
+  }
+}
 
 class _LibrarySongMenu extends ConsumerWidget {
   final Song song;
@@ -840,15 +853,16 @@ class _LibrarySongMenu extends ConsumerWidget {
             },
           ),
           ListTile(
-            leading: const Icon(Icons.remove_circle_outline, color: BopTheme.red, size: 20),
-            title: const Text('Remove from library', style: TextStyle(color: BopTheme.red, fontSize: 14)),
+            leading: const Icon(Icons.hide_source, color: BopTheme.red, size: 20),
+            title: const Text('Hide from library', style: TextStyle(color: Colors.white, fontSize: 14)),
+            subtitle: const Text('Song will stay on device but won\'t show here.', style: TextStyle(color: Colors.white38, fontSize: 10)),
             onTap: () async {
               final confirm = await showDialog<bool>(
                 context: context,
                 builder: (ctx) => AlertDialog(
                   backgroundColor: const Color(0xFF282828),
-                  title: const Text('Delete Song', style: TextStyle(color: Colors.white)),
-                  content: Text('Permanently delete "${song.title}" from your device and library?',
+                  title: const Text('Hide Song', style: TextStyle(color: Colors.white)),
+                  content: Text('Hide "${song.title}" from your library? It will not be scanned again unless you reset your database.',
                       style: const TextStyle(color: Colors.white70)),
                   actions: [
                     TextButton(
@@ -857,7 +871,44 @@ class _LibrarySongMenu extends ConsumerWidget {
                     ),
                     TextButton(
                       onPressed: () => Navigator.pop(ctx, true),
-                      child: const Text('Remove', style: TextStyle(color: BopTheme.red)),
+                      child: const Text('Hide', style: TextStyle(color: BopTheme.red)),
+                    ),
+                  ],
+                ),
+              );
+              if (confirm == true) {
+                await DbService.instance.hideSong(song.id);
+                if (context.mounted) {
+                  ref.read(playerProvider.notifier).removeSong(song.id);
+                  ref.invalidate(allSongsProvider);
+                  ref.invalidate(likedSongsProvider);
+                  ref.invalidate(recentSongsProvider);
+                }
+              }
+              if (context.mounted) {
+                Navigator.pop(context);
+              }
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.delete_forever_outlined, color: Colors.white38, size: 20),
+            title: const Text('Delete from device', style: TextStyle(color: Colors.white38, fontSize: 14)),
+            onTap: () async {
+              final confirm = await showDialog<bool>(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  backgroundColor: const Color(0xFF282828),
+                  title: const Text('Delete Permanently', style: TextStyle(color: Colors.white)),
+                  content: Text('This will delete "${song.title}" PERMANENTLY from your phone storage. This cannot be undone.',
+                      style: const TextStyle(color: Colors.white70)),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      child: const Text('Cancel', style: TextStyle(color: BopTheme.textSecondary)),
+                    ),
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      child: const Text('Delete', style: TextStyle(color: BopTheme.red)),
                     ),
                   ],
                 ),
@@ -896,59 +947,6 @@ void _showPlaylistSelector(BuildContext context, WidgetRef ref, Song song) {
       borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
     ),
     builder: (_) => PlaylistSelector(song: song),
-  );
-}
-
-void _showMultiPlaylistSelector(BuildContext context, WidgetRef ref, List<int> songIds) {
-  showModalBottomSheet(
-    context: context,
-    isScrollControlled: true,
-    backgroundColor: const Color(0xFF282828),
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-    ),
-    builder: (ctx) => Consumer(
-      builder: (context, ref, _) {
-        final asyncPlaylists = ref.watch(playlistsStreamProvider);
-        return asyncPlaylists.when(
-          data: (playlists) {
-            return SafeArea(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Padding(
-                    padding: EdgeInsets.all(16),
-                    child: Text('Add to Playlist', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-                  ),
-                  if (playlists.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.all(32),
-                      child: Text('No playlists yet.', style: TextStyle(color: BopTheme.textSecondary)),
-                    )
-                  else
-                    ...playlists.map((p) => ListTile(
-                          leading: const Icon(Icons.queue_music, color: Colors.white54),
-                          title: Text(p.name, style: const TextStyle(color: Colors.white)),
-                          onTap: () async {
-                            Navigator.pop(ctx);
-                            for (final id in songIds) {
-                              await DbService.instance.addSongToPlaylist(p.id, id);
-                            }
-                            if (context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Added ${songIds.length} songs to ${p.name}', style: const TextStyle(color: Colors.white)), backgroundColor: BopTheme.surfaceAlt));
-                            }
-                            ref.read(librarySelectionProvider.notifier).state = {};
-                          },
-                        )),
-                ],
-              ),
-            );
-          },
-          loading: () => const Padding(padding: EdgeInsets.all(32), child: Center(child: CircularProgressIndicator())),
-          error: (_, __) => const SizedBox(),
-        );
-      },
-    ),
   );
 }
 
@@ -1066,7 +1064,6 @@ void showPlaylistDetails(BuildContext context, WidgetRef ref, Playlist playlist)
   );
 }
 
-
 void _confirmDeletePlaylist(BuildContext context, WidgetRef ref, Playlist playlist) {
   showDialog(
     context: context,
@@ -1084,13 +1081,163 @@ void _confirmDeletePlaylist(BuildContext context, WidgetRef ref, Playlist playli
           onPressed: () async {
             Navigator.pop(ctx);
             await DbService.instance.deletePlaylist(playlist.id);
-            // The stream provider will auto-update
           },
           child: const Text('Delete', style: TextStyle(color: BopTheme.red)),
         ),
       ],
     ),
   );
+}
+
+void _showBulkGenreEditor(BuildContext context, WidgetRef ref) async {
+  final songs = await DbService.instance.songs.where().findAll();
+  final genreSet = <String>{};
+  for (final s in songs) {
+    if (s.genre.isNotEmpty) {
+      final parts = s.genre.split(RegExp(r'[,/]')).map((g) => g.trim());
+      for (final p in parts) {
+        if (p.isNotEmpty) genreSet.add(p);
+      }
+    }
+  }
+  final genres = genreSet.toList()..sort();
+
+  if (context.mounted) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF191414),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => _GenreEditorModal(genres: genres),
+    ).then((_) {
+      ref.invalidate(allSongsProvider);
+    });
+  }
+}
+
+class _GenreEditorModal extends StatefulWidget {
+  final List<String> genres;
+  const _GenreEditorModal({required this.genres});
+
+  @override
+  State<_GenreEditorModal> createState() => _GenreEditorModalState();
+}
+
+class _GenreEditorModalState extends State<_GenreEditorModal> {
+  late List<String> _genres;
+
+  @override
+  void initState() {
+    super.initState();
+    _genres = List.from(widget.genres);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.75,
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('Manage Genres', style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900)),
+              IconButton(icon: const Icon(Icons.close, color: Colors.white70), onPressed: () => Navigator.pop(context)),
+            ],
+          ),
+          const Text('Tap a genre to rename it across all songs.', style: TextStyle(color: BopTheme.textSecondary, fontSize: 13)),
+          const SizedBox(height: 20),
+          Expanded(
+            child: ListView.separated(
+              itemCount: _genres.length,
+              separatorBuilder: (_, __) => const Divider(color: Colors.white10),
+              itemBuilder: (context, i) {
+                final genre = _genres[i];
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.label_outline, color: BopTheme.green),
+                  title: Text(genre, style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w600)),
+                  trailing: const Icon(Icons.edit, color: Colors.white24, size: 18),
+                  onTap: () => _renameGenre(context, genre),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _renameGenre(BuildContext context, String oldName) {
+    final controller = TextEditingController(text: oldName);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF282828),
+        title: Text('Rename "$oldName"', style: const TextStyle(color: Colors.white, fontSize: 18)),
+        content: TextField(
+          controller: controller,
+          style: const TextStyle(color: Colors.white),
+          decoration: const InputDecoration(
+            hintText: 'New genre name',
+            hintStyle: TextStyle(color: Colors.white24),
+            enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white10)),
+            focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: BopTheme.green)),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel', style: TextStyle(color: BopTheme.textSecondary))),
+          TextButton(
+            onPressed: () async {
+              final newName = controller.text.trim();
+              if (newName.isNotEmpty && newName != oldName) {
+                Navigator.pop(ctx);
+                await _performRename(oldName, newName);
+              } else {
+                Navigator.pop(ctx);
+              }
+            },
+            child: const Text('Rename', style: TextStyle(color: BopTheme.green, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _performRename(String oldName, String newName) async {
+    final isar = DbService.instance.isar;
+    final songs = await isar.songs.where().findAll();
+    
+    await isar.writeTxn(() async {
+      for (final s in songs) {
+        if (s.genre.isEmpty) continue;
+        
+        final parts = s.genre.split(RegExp(r'[,/]')).map((g) => g.trim()).toList();
+        bool changed = false;
+        for (int i = 0; i < parts.length; i++) {
+          if (parts[i].toLowerCase() == oldName.toLowerCase()) {
+            parts[i] = newName;
+            changed = true;
+          }
+        }
+        
+        if (changed) {
+          s.genre = parts.join(', ');
+          await isar.songs.put(s);
+        }
+      }
+    });
+
+    if (mounted) {
+      setState(() {
+        final idx = _genres.indexOf(oldName);
+        if (idx != -1) _genres[idx] = newName;
+        _genres.sort();
+      });
+    }
+  }
 }
 
 void _showCreditsDialog(BuildContext context, Song song) {

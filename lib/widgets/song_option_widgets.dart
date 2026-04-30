@@ -1,5 +1,4 @@
 // widgets/song_option_widgets.dart
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:isar/isar.dart';
@@ -14,8 +13,9 @@ final playlistsStreamProvider = StreamProvider<List<Playlist>>((ref) {
 });
 
 class PlaylistSelector extends ConsumerWidget {
-  final Song song;
-  const PlaylistSelector({super.key, required this.song});
+  final List<Song> songs;
+  PlaylistSelector({super.key, required Song song}) : songs = [song];
+  const PlaylistSelector.multiple({super.key, required this.songs});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -27,8 +27,8 @@ class PlaylistSelector extends ConsumerWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Text('Add to Playlist',
-              style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+          Text(songs.length > 1 ? 'Add ${songs.length} songs to...' : 'Add to Playlist',
+              style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 16),
           ListTile(
             leading: const Icon(Icons.add, color: BopTheme.green),
@@ -46,7 +46,9 @@ class PlaylistSelector extends ConsumerWidget {
                     leading: const Icon(Icons.playlist_play, color: BopTheme.textSecondary),
                     title: Text(p.name, style: const TextStyle(color: Colors.white)),
                     onTap: () async {
-                      await DbService.instance.addSongToPlaylist(p.id, song.id);
+                      for (final song in songs) {
+                        await DbService.instance.addSongToPlaylist(p.id, song.id);
+                      }
                       Navigator.pop(context);
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(content: Text('Added to ${p.name}')),

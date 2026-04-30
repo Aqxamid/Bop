@@ -2,7 +2,6 @@
 // Persistent mini player bar at the bottom of every tab screen.
 // Features: rounded corners, cover-based gradient, marquee text, progress bar.
 import 'dart:typed_data';
-import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:palette_generator/palette_generator.dart';
@@ -10,7 +9,6 @@ import 'package:text_scroll/text_scroll.dart';
 import '../theme/app_theme.dart';
 import '../providers/player_provider.dart';
 import '../screens/player/now_playing_screen.dart';
-import '../services/llm_service.dart';
 
 /// Caches extracted dominant color per song id to avoid re-computing.
 final _colorCache = <int, Color>{};
@@ -38,7 +36,6 @@ class MiniPlayer extends ConsumerStatefulWidget {
 
 class _MiniPlayerState extends ConsumerState<MiniPlayer> {
   Color _dominantColor = BopTheme.surface;
-
   int? _lastSongId;
 
   void _updateColor(int songId, List<int> artBytes) async {
@@ -75,145 +72,130 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> {
         : 0.0;
 
     return GestureDetector(
-          onVerticalDragEnd: (details) {
-            if (details.primaryVelocity != null && details.primaryVelocity! < 0) {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => NowPlayingScreen(song: song)),
-              );
-            }
-          },
-          child: InkWell(
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => NowPlayingScreen(song: song),
-                ),
-              );
-            },
-            borderRadius: BorderRadius.circular(14),
-            child: Container(
-              margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      behavior: HitTestBehavior.opaque,
+      onHorizontalDragEnd: (details) {
+        if (details.primaryVelocity != null) {
+          if (details.primaryVelocity! < 0) {
+            ref.read(playerProvider.notifier).skipNext();
+          } else if (details.primaryVelocity! > 0) {
+            ref.read(playerProvider.notifier).skipPrevious();
+          }
+        }
+      },
+      onVerticalDragEnd: (details) {
+        if (details.primaryVelocity != null) {
+          if (details.primaryVelocity! < 0) {
+            Navigator.push(context, MaterialPageRoute(builder: (_) => NowPlayingScreen(song: song)));
+          } else if (details.primaryVelocity! > 0) {
+            ref.read(playerProvider.notifier).stop();
+          }
+        }
+      },
+      child: InkWell(
+        onTap: () {
+          Navigator.push(context, MaterialPageRoute(builder: (_) => NowPlayingScreen(song: song)));
+        },
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
             gradient: LinearGradient(
               colors: [
-                _dominantColor.withOpacity(0.85),
-                _dominantColor.withOpacity(0.4),
-                BopTheme.surface.withOpacity(0.95),
+                _dominantColor.withOpacity(0.9),
+                const Color(0xFF1A1A1A),
               ],
-              begin: Alignment.centerLeft,
-              end: Alignment.centerRight,
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
             ),
+            borderRadius: BorderRadius.circular(12),
           ),
           clipBehavior: Clip.antiAlias,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 8, 6),
-              child: Row(
-                children: [
-                  // Album art thumb
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(6),
-                    child: SizedBox(
-                      width: 42,
-                      height: 42,
-                      child: song.artBytes != null && song.artBytes!.isNotEmpty
-                          ? Image.memory(
-                              Uint8List.fromList(song.artBytes!),
-                              key: ValueKey('mini_art_${song.id}'),
-                              cacheWidth: 84, // 42 * devicePixelRatio (approx 2.0)
-                              cacheHeight: 84,
-                              fit: BoxFit.cover,
-                              gaplessPlayback: true,
-                            )
-                          : Container(
-                              color: const Color(0xFFC0392B),
-                              child: Center(
-                                child: Text(
-                                  song.title.isNotEmpty ? song.title[0] : '♪',
-                                  style: const TextStyle(
-                                    color: Color(0xFFF1C40F),
-                                    fontWeight: FontWeight.w900,
-                                    fontSize: 16,
-                                  ),
-                                ),
-                              ),
-                            ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-
-                  // Song info
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        TextScroll(song.title,
-                            velocity: const Velocity(
-                                pixelsPerSecond: Offset(30, 0)),
-                            delayBefore: const Duration(seconds: 2),
-                            pauseBetween: const Duration(seconds: 2),
-                            style: const TextStyle(
-                                color: BopTheme.textPrimary,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600)),
-                        Text(song.artist,
-                            style: const TextStyle(
-                                color: BopTheme.textSecondary,
-                                fontSize: 10)),
-                      ],
-                    ),
-                  ),
-
-                  // Play/Pause button
-                  IconButton(
-                    icon: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 250),
-                      transitionBuilder: (child, animation) =>
-                          ScaleTransition(scale: animation, child: child),
-                      child: Icon(
-                        playerState.isPlaying ? Icons.pause : Icons.play_arrow,
-                        key: ValueKey(playerState.isPlaying),
-                        color: BopTheme.textPrimary,
+          child: Stack(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(8, 8, 8, 10),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(6),
+                        child: song.artBytes != null && song.artBytes!.isNotEmpty
+                            ? Image.memory(
+                                Uint8List.fromList(song.artBytes!),
+                                key: ValueKey('mini_art_${song.id}'),
+                                cacheWidth: 88,
+                                cacheHeight: 88,
+                                fit: BoxFit.cover,
+                                gaplessPlayback: true,
+                              )
+                            : Container(color: BopTheme.surfaceAlt),
                       ),
                     ),
-                    onPressed: () {
-                      ref.read(playerProvider.notifier).togglePlayPause();
-                    },
-                  ),
+                    const SizedBox(width: 12),
 
-                  // Skip next
-                  IconButton(
-                    icon: const Icon(Icons.skip_next,
-                        color: BopTheme.textSecondary),
-                    onPressed: () {
-                      ref.read(playerProvider.notifier).skipNext();
-                    },
-                  ),
-                ],
-              ),
-            ),
+                    // Song info
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          TextScroll(
+                            song.title,
+                            velocity: const Velocity(pixelsPerSecond: Offset(30, 0)),
+                            style: const TextStyle(
+                              color: BopTheme.textPrimary,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          Text(
+                            song.artist,
+                            style: const TextStyle(
+                              color: BopTheme.textSecondary,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
 
-            // ── Progress bar ─────────────────────────────
-            ClipRRect(
-              borderRadius:
-                  const BorderRadius.vertical(bottom: Radius.circular(14)),
-              child: LinearProgressIndicator(
-                value: progress,
-                minHeight: 2.5,
-                backgroundColor: Colors.white.withOpacity(0.1),
-                valueColor:
-                    const AlwaysStoppedAnimation<Color>(BopTheme.green),
+                    IconButton(
+                      icon: Icon(
+                        playerState.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                        color: Colors.white,
+                        size: 32,
+                      ),
+                      onPressed: () => ref.read(playerProvider.notifier).togglePlayPause(),
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+
+              // Progress bar
+              Positioned(
+                bottom: 0,
+                left: 0,
+                right: 0,
+                child: Container(
+                  height: 2,
+                  color: Colors.white.withOpacity(0.1),
+                  child: FractionallySizedBox(
+                    alignment: Alignment.centerLeft,
+                    widthFactor: progress,
+                    child: Container(
+                      color: Colors.white.withOpacity(0.5),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
-      ),
       ),
     );
   }

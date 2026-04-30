@@ -1,6 +1,6 @@
 name: bop
-description: Bop — the ultimate offline music player with on-device Recap stories.
-version: 2.4.0+1
+description: Bop v2 — the ultimate offline music player with premium on-device recaps.
+version: 2.6.3+5
 
 environment:
   sdk: ">=3.0.0 <4.0.0"
@@ -78,10 +78,10 @@ dev_dependencies:
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: "C:/Users/ADMIN/.gemini/antigravity/brain/c4d8cac1-8ad4-4e9a-a375-a788af36f6c9/media__1774450392983.png"
+  image_path: "assets/icon.png"
   min_sdk_android: 21
   adaptive_icon_background: "#121212"
-  adaptive_icon_foreground: "C:/Users/ADMIN/.gemini/antigravity/brain/c4d8cac1-8ad4-4e9a-a375-a788af36f6c9/media__1774450392983.png"
+  adaptive_icon_foreground: "assets/icon.png"
 
 flutter:
   uses-material-design: true

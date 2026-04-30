@@ -3,16 +3,14 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../theme/app_theme.dart';
-import '../../widgets/mini_player.dart';
 import '../../providers/stats_provider.dart';
 import '../../providers/player_provider.dart';
 import '../../models/song.dart';
-import '../../models/playlist.dart';
-import '../../widgets/song_option_widgets.dart';
 import '../player/now_playing_screen.dart';
-import 'library_screen.dart';
 import '../../services/db_service.dart';
 import 'metadata_editor_screen.dart';
+import 'library_screen.dart';
+import '../../widgets/song_option_widgets.dart';
 
 // ── Genre color palette ────────────────────────────────────────
 const _genreColors = <String, Color>{
@@ -50,12 +48,10 @@ const _genreColors = <String, Color>{
 };
 
 Color _colorForGenre(String genre) {
-  // Exact match first, then case-insensitive
   if (_genreColors.containsKey(genre)) return _genreColors[genre]!;
   for (final entry in _genreColors.entries) {
     if (entry.key.toLowerCase() == genre.toLowerCase()) return entry.value;
   }
-  // Deterministic fallback color based on genre string hash
   final hash = genre.hashCode.abs();
   return HSLColor.fromAHSL(1.0, (hash % 360).toDouble(), 0.5, 0.3).toColor();
 }
@@ -70,7 +66,6 @@ class SearchScreen extends ConsumerStatefulWidget {
 class _SearchScreenState extends ConsumerState<SearchScreen> {
   final _controller = TextEditingController();
   String _query = '';
-  String? _selectedGenre;
 
   @override
   void dispose() {
@@ -81,309 +76,234 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   @override
   Widget build(BuildContext context) {
     final allSongs = ref.watch(allSongsProvider);
-    final playlistsAsync = ref.watch(playlistsStreamProvider);
+    final selectedGenre = ref.watch(searchGenreProvider);
 
-    return Column(
+    return ListView(
+      padding: EdgeInsets.fromLTRB(16, MediaQuery.of(context).padding.top + 8, 16, 120),
       children: [
-        Expanded(
-          child: ListView(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
-            children: [
-              const SizedBox(height: 16),
-              Text('Search',
-                  style: Theme.of(context)
-                      .textTheme
-                      .headlineMedium
-                      ?.copyWith(fontSize: 20)),
-              const SizedBox(height: 12),
 
-              // ── Search bar ────────────────────────
-              Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: Row(
-                  children: [
-                    const Icon(Icons.search, color: Colors.black54, size: 18),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: TextField(
-                        controller: _controller,
-                        style: const TextStyle(color: Colors.black, fontSize: 13),
-                        decoration: const InputDecoration(
-                          hintText: 'Artists, songs, or albums',
-                          hintStyle: TextStyle(color: Colors.black45, fontSize: 13),
-                          border: InputBorder.none,
-                          isDense: true,
-                          contentPadding: EdgeInsets.symmetric(vertical: 10),
-                        ),
-                        onChanged: (v) => setState(() {
-                          _query = v;
-                          if (v.isNotEmpty) _selectedGenre = null;
-                        }),
-                      ),
-                    ),
-                    if (_query.isNotEmpty)
-                      InkWell(
-                        onTap: () {
-                          _controller.clear();
-                          setState(() => _query = '');
-                        },
-                        child: const Padding(
-                          padding: EdgeInsets.all(8),
-                          child: Icon(Icons.close, color: Colors.black54, size: 16),
-                        ),
-                      ),
-                  ],
+        const Text('Search',
+            style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w900)),
+        const SizedBox(height: 12),
+
+        // ── Search bar ────────────────────────
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Row(
+            children: [
+              const Icon(Icons.search, color: Colors.black54, size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: TextField(
+                  controller: _controller,
+                  style: const TextStyle(color: Colors.black, fontSize: 13),
+                  decoration: const InputDecoration(
+                    hintText: 'Artists, songs, or albums',
+                    hintStyle: TextStyle(color: Colors.black45, fontSize: 13),
+                    border: InputBorder.none,
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(vertical: 10),
+                  ),
+                  onChanged: (v) {
+                    setState(() => _query = v);
+                    if (v.isNotEmpty) ref.read(searchGenreProvider.notifier).state = null;
+                  },
                 ),
               ),
-              const SizedBox(height: 20),
-
-              // ── Genre grid (when not searching) ──
-              if (_query.isEmpty) ...[
-                if (_selectedGenre != null) ...[
-                  // ── Genre detail header ─────────────
-                  Row(
-                    children: [
-                      InkWell(
-                        onTap: () => setState(() => _selectedGenre = null),
-                        child: const Padding(
-                          padding: EdgeInsets.all(8),
-                          child: Icon(Icons.arrow_back,
-                              color: BopTheme.textPrimary, size: 20),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Text(_selectedGenre!,
-                          style: Theme.of(context)
-                              .textTheme
-                              .titleSmall
-                              ?.copyWith(fontWeight: FontWeight.w700)),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  // Song list for genre
-                  allSongs.when(
-                    data: (songs) {
-                      final genreSongs = songs.where((s) {
-                        final genres = s.genre.split(RegExp(r'[,/]')).map((g) => g.trim().toLowerCase());
-                        return genres.contains(_selectedGenre!.toLowerCase());
-                      }).toList();
-                      if (genreSongs.isEmpty) {
-                        return const Padding(
-                          padding: EdgeInsets.all(32),
-                          child: Text('No songs in this genre',
-                              style: TextStyle(color: BopTheme.textMuted)),
-                        );
-                      }
-                      return Column(
-                        children: genreSongs.asMap().entries.map((entry) {
-                          final song = entry.value;
-                          return ListTile(
-                            contentPadding: EdgeInsets.zero,
-                            leading: ClipRRect(
-                              borderRadius: BorderRadius.circular(4),
-                              child: SizedBox(
-                                width: 40,
-                                height: 40,
-                                child: song.artBytes != null && song.artBytes!.isNotEmpty
-                                    ? Image.memory(
-                                        Uint8List.fromList(song.artBytes!),
-                                        key: ValueKey('genre_art_${song.id}'),
-                                        fit: BoxFit.cover,
-                                        gaplessPlayback: true,
-                                      )
-                                    : Container(
-                                        color: _colorForGenre(_selectedGenre!),
-                                        child: const Center(
-                                          child: Icon(Icons.music_note,
-                                              color: Colors.white54, size: 18),
-                                        ),
-                                      ),
-                              ),
-                            ),
-                            title: Text(song.title,
-                                style: const TextStyle(
-                                    color: BopTheme.textPrimary,
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 13),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis),
-                            subtitle: Text(song.artist,
-                                style: const TextStyle(
-                                    color: BopTheme.textSecondary, fontSize: 11)),
-                            trailing: IconButton(
-                              icon: const Icon(Icons.more_vert, color: BopTheme.textSecondary, size: 20),
-                              onPressed: () {
-                                showModalBottomSheet(
-                                  context: context,
-                                  isScrollControlled: true,
-                                  backgroundColor: const Color(0xFF282828),
-                                  shape: const RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-                                  ),
-                                  builder: (_) => _SearchSongMenu(song: song),
-                                );
-                              },
-                            ),
-                            onTap: () {
-                              ref
-                                  .read(playerProvider.notifier)
-                                  .playQueue(genreSongs, startIndex: entry.key);
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => NowPlayingScreen(song: song),
-                                ),
-                              );
-                            },
-                          );
-                        }).toList(),
-                      );
-                    },
-                    loading: () => const Center(child: CircularProgressIndicator()),
-                    error: (_, __) => const Text('Error loading songs'),
-                  ),
-                ] else ...[
-                  // ── Dynamic genre cards ───────────────
-                  Text('Browse categories',
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleSmall
-                          ?.copyWith(fontWeight: FontWeight.w700)),
-                  const SizedBox(height: 10),
-                  allSongs.when(
-                    data: (songs) {
-                      // Build genre map dynamically from library
-                      final genreMap = <String, List<Song>>{};
-                      for (final song in songs) {
-                        final rawGenre = song.genre.trim();
-                        if (rawGenre.isEmpty || rawGenre == 'Unknown') continue;
-                        
-                        // Support multiple genres separated by comma or slash
-                        final parts = rawGenre.split(RegExp(r'[,/]'))
-                           .map((g) {
-                             final t = g.trim();
-                             return t.isEmpty ? t : t[0].toUpperCase() + t.substring(1).toLowerCase();
-                           })
-                           .where((g) => g.isNotEmpty);
-                        for (final genre in parts) {
-                          genreMap.putIfAbsent(genre, () => []).add(song);
-                        }
-                      }
-                      // Sort by song count (most popular genres first)
-                      final sortedGenres = genreMap.entries.toList()
-                        ..sort((a, b) => b.value.length.compareTo(a.value.length));
-
-                      // Filter to show ONLY Genres
-                      final totalCards = sortedGenres.length;
-
-                      if (totalCards == 0) {
-                        return const Padding(
-                          padding: EdgeInsets.all(32),
-                          child: Text(
-                            'No genres found.\nEdit song metadata to see categories.',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(color: BopTheme.textMuted),
-                          ),
-                        );
-                      }
-
-                      return GridView.builder(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 2,
-                          mainAxisSpacing: 8,
-                          crossAxisSpacing: 8,
-                          childAspectRatio: 1.7,
-                        ),
-                        itemCount: totalCards,
-                        itemBuilder: (context, index) {
-                          // Render Genre Card
-                          final genre = sortedGenres[index].key;
-                          final genreSongs = sortedGenres[index].value;
-                          
-                          // Find first song with album art for this genre
-                          final artSong = genreSongs.cast<Song?>().firstWhere(
-                            (s) => s!.artBytes != null && s.artBytes!.isNotEmpty,
-                            orElse: () => null,
-                          );
-                          return _GenreCard(
-                            name: genre,
-                            color: _colorForGenre(genre),
-                            artSong: artSong,
-                            songCount: genreSongs.length,
-                            onTap: () => setState(() => _selectedGenre = genre),
-                          );
-                        },
-                      );
-                    },
-                    loading: () => GridView.count(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      crossAxisCount: 2,
-                      mainAxisSpacing: 8,
-                      crossAxisSpacing: 8,
-                      children: List.generate(
-                        6,
-                        (_) => Container(
-                          decoration: BoxDecoration(
-                            color: BopTheme.surfaceAlt,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                        ),
-                      ),
-                    ),
-                    error: (_, __) => const Text('Error loading songs'),
-                  ),
-                ],
-              ],
-
-              // ── Search results ────────────────────
               if (_query.isNotEmpty)
-                allSongs.when(
-                  data: (songs) {
-                    final q = _query.toLowerCase();
-                    final results = songs.where((s) =>
-                        s.title.toLowerCase().contains(q) ||
-                        s.artist.toLowerCase().contains(q) ||
-                        s.album.toLowerCase().contains(q) ||
-                        s.genre.toLowerCase().contains(q)).toList();
-                    return _SearchResults(
-                      query: _query,
-                      results: results,
-                      onTap: (song, index) {
-                        ref
-                            .read(playerProvider.notifier)
-                            .playQueue(results, startIndex: index);
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => NowPlayingScreen(song: song),
-                          ),
-                        );
-                      },
-                    );
+                InkWell(
+                  onTap: () {
+                    _controller.clear();
+                    setState(() => _query = '');
                   },
-                  loading: () => const Center(
-                      child: CircularProgressIndicator()),
-                  error: (_, __) => const Text('Error loading songs'),
+                  child: const Padding(
+                    padding: EdgeInsets.all(8),
+                    child: Icon(Icons.close, color: Colors.black54, size: 16),
+                  ),
                 ),
-
-              const SizedBox(height: 100),
             ],
           ),
         ),
-        const MiniPlayer(),
+        const SizedBox(height: 12),
+
+        // ── Genre view ────────────────────────
+        if (_query.isEmpty) ...[
+          if (selectedGenre != null) ...[
+            // ── Genre Detail ──
+            Row(
+              children: [
+                InkWell(
+                  onTap: () => ref.read(searchGenreProvider.notifier).state = null,
+                  child: const Padding(
+                    padding: EdgeInsets.all(8),
+                    child: Icon(Icons.arrow_back, color: BopTheme.textPrimary, size: 20),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Text(selectedGenre,
+                    style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+              ],
+            ),
+            const SizedBox(height: 4),
+            allSongs.when(
+              data: (songs) {
+                final genreSongs = songs.where((s) {
+                  final genres = s.genre.split(RegExp(r'[,/]')).map((g) => g.trim().toLowerCase());
+                  return genres.contains(selectedGenre.toLowerCase());
+                }).toList();
+                if (genreSongs.isEmpty) {
+                  return const Padding(
+                    padding: EdgeInsets.all(32),
+                    child: Text('No songs in this genre', style: TextStyle(color: BopTheme.textMuted)),
+                  );
+                }
+                return Column(
+                  children: genreSongs.asMap().entries.map((entry) {
+                    final song = entry.value;
+                    return ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: SizedBox(
+                          width: 40,
+                          height: 40,
+                          child: song.artBytes != null && song.artBytes!.isNotEmpty
+                              ? Image.memory(
+                                  Uint8List.fromList(song.artBytes!),
+                                  key: ValueKey('genre_art_${song.id}'),
+                                  fit: BoxFit.cover,
+                                  gaplessPlayback: true,
+                                )
+                              : Container(
+                                  color: _colorForGenre(selectedGenre),
+                                  child: const Center(
+                                    child: Icon(Icons.music_note, color: Colors.white54, size: 18),
+                                  ),
+                                ),
+                        ),
+                      ),
+                      title: Text(song.title,
+                          style: const TextStyle(color: BopTheme.textPrimary, fontWeight: FontWeight.w600, fontSize: 13),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis),
+                      subtitle: Text(song.artist, style: const TextStyle(color: BopTheme.textSecondary, fontSize: 11)),
+                      trailing: IconButton(
+                        icon: const Icon(Icons.more_vert, color: BopTheme.textSecondary, size: 20),
+                        onPressed: () {
+                          showModalBottomSheet(
+                            context: context,
+                            isScrollControlled: true,
+                            backgroundColor: const Color(0xFF282828),
+                            shape: const RoundedRectangleBorder(
+                              borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+                            ),
+                            builder: (_) => _SearchSongMenu(song: song),
+                          );
+                        },
+                      ),
+                      onTap: () {
+                        ref.read(playerProvider.notifier).playQueue(genreSongs, startIndex: entry.key);
+                        Navigator.push(context, MaterialPageRoute(builder: (_) => NowPlayingScreen(song: song)));
+                      },
+                    );
+                  }).toList(),
+                );
+              },
+              loading: () => const Center(child: CircularProgressIndicator()),
+              error: (_, __) => const Text('Error loading songs'),
+            ),
+          ] else ...[
+            // ── Genre Grid ──
+            const Text('Browse categories',
+                style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 6),
+            allSongs.when(
+              data: (songs) {
+                final genreMap = <String, List<Song>>{};
+                for (final song in songs) {
+                  final rawGenre = song.genre.trim();
+                  if (rawGenre.isEmpty || rawGenre == 'Unknown') continue;
+                  final parts = rawGenre.split(RegExp(r'[,/]')).map((g) {
+                    final t = g.trim();
+                    return t.isEmpty ? t : t[0].toUpperCase() + t.substring(1).toLowerCase();
+                  }).where((g) => g.isNotEmpty);
+                  for (final genre in parts) {
+                    genreMap.putIfAbsent(genre, () => []).add(song);
+                  }
+                }
+                final sortedGenres = genreMap.entries.toList()..sort((a, b) => b.value.length.compareTo(a.value.length));
+                if (sortedGenres.isEmpty) {
+                  return const Padding(
+                    padding: EdgeInsets.all(32),
+                    child: Text('No genres found.\nEdit metadata to see categories.',
+                        textAlign: TextAlign.center, style: TextStyle(color: BopTheme.textMuted)),
+                  );
+                }
+                return GridView.builder(
+                  shrinkWrap: true,
+                  padding: EdgeInsets.zero,
+                  physics: const NeverScrollableScrollPhysics(),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                    mainAxisSpacing: 8,
+                    crossAxisSpacing: 8,
+                    childAspectRatio: 1.7,
+                  ),
+                  itemCount: sortedGenres.length,
+                  itemBuilder: (context, index) {
+                    final genre = sortedGenres[index].key;
+                    final gSongs = sortedGenres[index].value;
+                    final artSong = gSongs.cast<Song?>().firstWhere(
+                          (s) => s!.artBytes != null && s.artBytes!.isNotEmpty,
+                          orElse: () => null,
+                        );
+                    return _GenreCard(
+                      name: genre,
+                      color: _colorForGenre(genre),
+                      artSong: artSong,
+                      songCount: gSongs.length,
+                      onTap: () => ref.read(searchGenreProvider.notifier).state = genre,
+                    );
+                  },
+                );
+              },
+              loading: () => const SizedBox.shrink(),
+              error: (_, __) => const Text('Error'),
+            ),
+          ],
+        ],
+
+        // ── Search results ────────────────────
+        if (_query.isNotEmpty)
+          allSongs.when(
+            data: (songs) {
+              final q = _query.toLowerCase().trim();
+              final terms = q.split(RegExp(r'\s+'));
+              final results = songs.where((s) {
+                final matchString = '${s.title} ${s.artist} ${s.album} ${s.genre}'.toLowerCase();
+                return terms.every((t) => matchString.contains(t));
+              }).toList();
+              return _SearchResults(
+                query: _query,
+                results: results,
+                onTap: (song, index) {
+                  ref.read(playerProvider.notifier).playQueue(results, startIndex: index);
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => NowPlayingScreen(song: song)));
+                },
+              );
+            },
+            loading: () => const Center(child: CircularProgressIndicator()),
+            error: (_, __) => const Text('Error'),
+          ),
       ],
     );
   }
 }
 
-// ── Genre card (Spotify-style with tilted album art) ──────────
 class _GenreCard extends StatelessWidget {
   final String name;
   final Color color;
@@ -391,13 +311,7 @@ class _GenreCard extends StatelessWidget {
   final int songCount;
   final VoidCallback onTap;
 
-  const _GenreCard({
-    required this.name,
-    required this.color,
-    this.artSong,
-    required this.songCount,
-    required this.onTap,
-  });
+  const _GenreCard({required this.name, required this.color, this.artSong, required this.songCount, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -406,33 +320,21 @@ class _GenreCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(8),
       child: Container(
         clipBehavior: Clip.hardEdge,
-        decoration: BoxDecoration(
-          color: color,
-          borderRadius: BorderRadius.circular(8),
-        ),
+        decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(8)),
         child: Stack(
           children: [
-            // Genre label
             Positioned(
               left: 12,
               top: 10,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(name,
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 14)),
+                  Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14)),
                   const SizedBox(height: 2),
-                  Text('$songCount songs',
-                      style: TextStyle(
-                          color: Colors.white.withOpacity(0.6),
-                          fontSize: 10)),
+                  Text('$songCount songs', style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 10)),
                 ],
               ),
             ),
-            // Tilted album art (like Spotify reference) — only if art exists
             if (artSong != null && artSong!.artBytes != null && artSong!.artBytes!.isNotEmpty)
               Positioned(
                 right: -8,
@@ -444,17 +346,8 @@ class _GenreCard extends StatelessWidget {
                     height: 58,
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(4),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.4),
-                          blurRadius: 8,
-                          offset: const Offset(-2, 2),
-                        ),
-                      ],
-                      image: DecorationImage(
-                        image: MemoryImage(Uint8List.fromList(artSong!.artBytes!)),
-                        fit: BoxFit.cover,
-                      ),
+                      boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.4), blurRadius: 8, offset: const Offset(-2, 2))],
+                      image: DecorationImage(image: MemoryImage(Uint8List.fromList(artSong!.artBytes!)), fit: BoxFit.cover),
                     ),
                   ),
                 ),
@@ -470,28 +363,17 @@ class _SearchResults extends StatelessWidget {
   final String query;
   final List<Song> results;
   final void Function(Song song, int index) onTap;
-  const _SearchResults({
-    required this.query,
-    required this.results,
-    required this.onTap,
-  });
+  const _SearchResults({required this.query, required this.results, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Results for "$query"',
-            style: Theme.of(context).textTheme.titleSmall),
+        Text('Results for "$query"', style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
         const SizedBox(height: 8),
         if (results.isEmpty)
-          const Center(
-            child: Padding(
-              padding: EdgeInsets.all(32),
-              child: Text('No local songs found',
-                  style: TextStyle(color: BopTheme.textMuted)),
-            ),
-          )
+          const Center(child: Padding(padding: EdgeInsets.all(32), child: Text('No local songs found', style: TextStyle(color: BopTheme.textMuted))))
         else
           ...results.asMap().entries.map((entry) {
             final song = entry.value;
@@ -503,31 +385,12 @@ class _SearchResults extends StatelessWidget {
                   width: 40,
                   height: 40,
                   child: song.artBytes != null && song.artBytes!.isNotEmpty
-                      ? Image.memory(
-                          Uint8List.fromList(song.artBytes!),
-                          key: ValueKey('search_art_${song.id}'),
-                          fit: BoxFit.cover,
-                          gaplessPlayback: true,
-                        )
-                      : Container(
-                          color: BopTheme.surfaceAlt,
-                          child: const Center(
-                            child: Icon(Icons.music_note,
-                                color: Colors.white54, size: 18),
-                          ),
-                        ),
+                      ? Image.memory(Uint8List.fromList(song.artBytes!), key: ValueKey('search_art_${song.id}'), fit: BoxFit.cover, gaplessPlayback: true)
+                      : Container(color: BopTheme.surfaceAlt, child: const Center(child: Icon(Icons.music_note, color: Colors.white54, size: 18))),
                 ),
               ),
-              title: Text(song.title,
-                  style: const TextStyle(
-                      color: BopTheme.textPrimary,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis),
-              subtitle: Text(song.artist,
-                  style: const TextStyle(
-                      color: BopTheme.textSecondary, fontSize: 11)),
+              title: Text(song.title, style: const TextStyle(color: BopTheme.textPrimary, fontWeight: FontWeight.w600, fontSize: 13), maxLines: 1, overflow: TextOverflow.ellipsis),
+              subtitle: Text(song.artist, style: const TextStyle(color: BopTheme.textSecondary, fontSize: 11)),
               onTap: () => onTap(song, entry.key),
             );
           }),
@@ -556,12 +419,7 @@ class _SearchSongMenu extends ConsumerWidget {
                     width: 44,
                     height: 44,
                     child: song.artBytes != null
-                        ? Image.memory(
-                            Uint8List.fromList(song.artBytes!),
-                            fit: BoxFit.cover,
-                            cacheWidth: 88,
-                            cacheHeight: 88,
-                          )
+                        ? Image.memory(Uint8List.fromList(song.artBytes!), fit: BoxFit.cover, cacheWidth: 88, cacheHeight: 88)
                         : const ColoredBox(color: Color(0xFFC0392B)),
                   ),
                 ),
@@ -570,17 +428,8 @@ class _SearchSongMenu extends ConsumerWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(song.title,
-                          style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w600,
-                              fontSize: 14),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis),
-                      Text(song.artist,
-                          style: const TextStyle(
-                              color: BopTheme.textSecondary,
-                              fontSize: 12)),
+                      Text(song.title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14), maxLines: 1, overflow: TextOverflow.ellipsis),
+                      Text(song.artist, style: const TextStyle(color: BopTheme.textSecondary, fontSize: 12)),
                     ],
                   ),
                 ),
@@ -589,12 +438,8 @@ class _SearchSongMenu extends ConsumerWidget {
           ),
           const Divider(color: Color(0xFF333333), height: 1),
           ListTile(
-            leading: Icon(
-                song.isLiked ? Icons.favorite : Icons.favorite_border,
-                color: song.isLiked ? BopTheme.green : BopTheme.textSecondary,
-                size: 20),
-            title: Text(song.isLiked ? 'Unlike' : 'Like',
-                style: const TextStyle(color: Colors.white, fontSize: 14)),
+            leading: Icon(song.isLiked ? Icons.favorite : Icons.favorite_border, color: song.isLiked ? BopTheme.green : BopTheme.textSecondary, size: 20),
+            title: Text(song.isLiked ? 'Unlike' : 'Like', style: const TextStyle(color: Colors.white, fontSize: 14)),
             onTap: () async {
               Navigator.pop(context);
               await DbService.instance.toggleLike(song.id);
@@ -612,9 +457,7 @@ class _SearchSongMenu extends ConsumerWidget {
                 context: context,
                 isScrollControlled: true,
                 backgroundColor: const Color(0xFF1E1E1E),
-                shape: const RoundedRectangleBorder(
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-                ),
+                shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
                 builder: (_) => PlaylistSelector(song: song),
               );
             },
@@ -633,12 +476,7 @@ class _SearchSongMenu extends ConsumerWidget {
             title: const Text('Edit metadata', style: TextStyle(color: Colors.white, fontSize: 14)),
             onTap: () {
               Navigator.pop(context);
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => MetadataEditorScreen(songs: [song]),
-                ),
-              );
+              Navigator.push(context, MaterialPageRoute(builder: (_) => MetadataEditorScreen(songs: [song])));
             },
           ),
           const SizedBox(height: 16),
@@ -647,4 +485,3 @@ class _SearchSongMenu extends ConsumerWidget {
     );
   }
 }
-

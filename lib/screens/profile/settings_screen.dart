@@ -12,8 +12,11 @@ import '../../services/db_service.dart';
 import '../../models/song.dart';
 import 'package:isar/isar.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../providers/stats_provider.dart';
 import '../../providers/settings_provider.dart';
+import '../../services/backup_service.dart';
+import 'package:share_plus/share_plus.dart';
+import '../../providers/stats_provider.dart'; // For debugDateProvider + llmModelReadyProvider
+import '../../services/notification_service.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -122,6 +125,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         if (!mounted) return;
         
         await LlmService.instance.updateModelPath(path);
+        // Notify providers that model state changed
+        ref.read(llmModelReadyProvider.notifier).state = LlmService.instance.isModelLoaded;
+        ref.invalidate(aiPlaylistsProvider);
         _checkApiKey();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -398,6 +404,132 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
+  Future<void> _handleBackup() async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => const Center(child: CircularProgressIndicator(color: BopTheme.green)),
+    );
+
+    try {
+      final path = await BackupService.instance.createBackup();
+      if (!mounted) return;
+      Navigator.pop(context); // Close loading
+
+      if (path != null) {
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            backgroundColor: const Color(0xFF282828),
+            title: const Text('Backup Created', style: TextStyle(color: Colors.white)),
+            content: Text('Your library state has been saved to:\n$path',
+                style: const TextStyle(color: Colors.white70, fontSize: 13)),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('OK', style: TextStyle(color: BopTheme.green)),
+              ),
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  Share.shareXFiles([XFile(path)], text: 'Bop Music Player Library Backup');
+                },
+                child: const Text('Share / Save Elsewhere', style: TextStyle(color: BopTheme.green)),
+              ),
+            ],
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Backup failed: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _handleRestore() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['json'],
+    );
+
+    if (result == null || result.files.single.path == null) return;
+
+    if (!mounted) return;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF282828),
+        title: const Text('Restore Backup?', style: TextStyle(color: Colors.white)),
+        content: const Text(
+          'This will merge the backup with your current library. Existing metadata will be overwritten if it exists in the backup.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel', style: TextStyle(color: BopTheme.textSecondary)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Restore', style: TextStyle(color: BopTheme.green)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true || !mounted) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => const Center(child: CircularProgressIndicator(color: BopTheme.green)),
+    );
+
+    try {
+      final counts = await BackupService.instance.restoreBackup(result.files.single.path!);
+      if (!mounted) return;
+      Navigator.pop(context); // Close loading
+
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: const Color(0xFF282828),
+          title: const Text('Restore Complete', style: TextStyle(color: Colors.white)),
+          content: Text(
+            'Successfully restored:\n• ${counts['songs']} Songs\n• ${counts['playlists']} Playlists\n• ${counts['events']} History Events\n• App Settings applied.',
+            style: const TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Close', style: TextStyle(color: BopTheme.green)),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Restore failed: $e')),
+        );
+      }
+    }
+  }
+
+  void _triggerTestNotification(String type) async {
+    await NotificationService.instance.showRecapNotification(type);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Test $type notification triggered!')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -558,6 +690,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                               activeColor: BopTheme.green,
                               onChanged: (val) async {
                                 await ai.setAiEnabled(val);
+                                // Sync the reactive provider so home screen updates
+                                ref.read(llmModelReadyProvider.notifier).state = ai.isModelLoaded;
+                                if (!val) ref.invalidate(aiPlaylistsProvider);
                                 setState(() {});
                               },
                             ),
@@ -614,15 +749,58 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             subtitle: 'Auto-fill artist, album, and genre tags',
             onTap: _fetchAllMissingMetadata,
           ),
+
+          const _SectionDivider(label: 'Library & Backup'),
+          _SettingsTile(
+            label: 'Backup Library',
+            subtitle: 'Export stats, playlists, and metadata to a JSON file',
+            onTap: _handleBackup,
+          ),
+          _SettingsTile(
+            label: 'Restore Library Backup',
+            subtitle: 'Import data from a previously saved JSON file',
+            onTap: _handleRestore,
+          ),
           
-          const _SectionDivider(label: 'Design & Feel'),
-          SwitchListTile(
-            title: const Text('Bop Bold Rendition', style: TextStyle(fontSize: 14)),
-            subtitle: const Text('Spotify-inspired high-contrast & abstract shapes (BETA)', style: TextStyle(fontSize: 11)),
-            value: ref.watch(boldDesignProvider),
-            activeColor: BopTheme.green,
-            onChanged: (val) {
-              ref.read(boldDesignProvider.notifier).toggle();
+          const _SectionDivider(label: 'Playback & Feel'),
+          Consumer(
+            builder: (context, ref, _) {
+              final settings = ref.watch(settingsProvider);
+              return Column(
+                children: [
+                  SwitchListTile(
+                    title: const Text('Gapless Playback', style: TextStyle(fontSize: 14)),
+                    subtitle: const Text('Pre-buffer next track for seamless transitions', style: TextStyle(fontSize: 11)),
+                    value: settings.gaplessPlayback,
+                    activeColor: BopTheme.green,
+                    onChanged: (val) => ref.read(settingsProvider.notifier).setGaplessPlayback(val),
+                  ),
+                  if (settings.gaplessPlayback)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text('Pre-buffer / Crossfade overlap', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                              Text('${settings.gaplessSeconds}s', style: const TextStyle(color: BopTheme.green, fontSize: 12, fontWeight: FontWeight.bold)),
+                            ],
+                          ),
+                          Slider(
+                            value: settings.gaplessSeconds.toDouble(),
+                            min: 0,
+                            max: 10,
+                            divisions: 10,
+                            activeColor: BopTheme.green,
+                            onChanged: (val) => ref.read(settingsProvider.notifier).setGaplessSeconds(val.toInt()),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              );
             },
           ),
           
@@ -644,16 +822,30 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             },
           ),
 
+          const _SectionDivider(label: 'Debug Notifications'),
+          _SettingsTile(
+            label: 'Trigger Weekly Recap Notification',
+            onTap: () => _triggerTestNotification('weekly'),
+          ),
+          _SettingsTile(
+            label: 'Trigger Monthly Recap Notification',
+            onTap: () => _triggerTestNotification('monthly'),
+          ),
+          _SettingsTile(
+            label: 'Trigger Annual Recap Notification',
+            onTap: () => _triggerTestNotification('annual'),
+          ),
+
           _SettingsTile(
             label: 'About',
             onTap: () {
               showAboutDialog(
                 context: context,
                 applicationName: 'Bop',
-                applicationVersion: '2.3.5',
+                applicationVersion: '2.6.3+5',
                 applicationIcon: const Icon(Icons.music_note, color: BopTheme.green),
                 children: [
-                  const Text('Bop v2.3.5 - Aquamid.'),
+                  const Text('Bop v2.6.3 — Polish & Precision.'),
                 ],
               );
             },

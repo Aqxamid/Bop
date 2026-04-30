@@ -3,16 +3,17 @@
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import '../models/playlist.dart';
-import '../services/db_service.dart';
-import '../theme/app_theme.dart';
+import '../models/song.dart';
 
 class PlaylistCoverWidget extends StatefulWidget {
   final Playlist playlist;
   final double size;
+  final List<Song>? songs;
   const PlaylistCoverWidget({
     super.key,
     required this.playlist,
     this.size = 56,
+    this.songs,
   });
 
   @override
@@ -32,7 +33,7 @@ class _PlaylistCoverWidgetState extends State<PlaylistCoverWidget> {
   @override
   void didUpdateWidget(PlaylistCoverWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.playlist.id != widget.playlist.id) {
+    if (oldWidget.playlist.id != widget.playlist.id || oldWidget.songs != widget.songs) {
       _loadArt();
     }
   }
@@ -42,12 +43,15 @@ class _PlaylistCoverWidgetState extends State<PlaylistCoverWidget> {
     setState(() => _isLoading = true);
     
     try {
-      // Efficiency check: Don't load all songs in a 1000+ song playlist just for 4 covers.
-      // Revert to using the songs link directly as no backlink exists in the model.
-      if (!widget.playlist.songs.isLoaded) {
-        await widget.playlist.songs.load();
+      List<Song> songs;
+      if (widget.songs != null && widget.songs!.isNotEmpty) {
+        songs = widget.songs!;
+      } else {
+        if (!widget.playlist.songs.isLoaded) {
+          await widget.playlist.songs.load();
+        }
+        songs = widget.playlist.songs.take(20).toList();
       }
-      final songs = widget.playlist.songs.take(20).toList();
 
       final arts = <List<int>>[];
       final seenArtHashes = <int>{};

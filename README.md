@@ -1,73 +1,50 @@
-# Bop
+# Bop v2
 
-An offline-first music player for Android with on-device Bop recaps powered by flexible GGUF LLM support.
+An offline-first, premium music player for Android with on-device Bop recaps, intelligent AI curation, and robust backup architecture.
+
+## Version 2.6.2 (Production Release)
+
+### New in v2.6.2
+- **Instant App Boot**: Asynchronous LLM background loading completely eliminates startup hang.
+- **Advanced Gapless Crossfade**: Live track duration monitoring auto-crossfades music to eliminate baked-in silences at the end of audio files.
+- **Robust Backup & Restore**: Full JSON-based library portability. Move your MP3s to a new phone and instantly restore custom lyrics, full play history, and personalized Wrapped Recaps.
+- **UI Density & Glassmorphism**: Premium "80/20" frosted-glass bottom navigation and professionally spaced home/stats grids.
 
 ## Features
 
-### 🎵 Local Music Player
+### Local Music Player
 - Scans and plays audio files stored on your device
-- Queue management with shuffle, repeat (off / one / all), and sleep timer
+- Advanced Gapless Playback with customizable early-skip crossfades
+- Queue management with shuffle, repeat, and sleep timer
 - Persistent mini player across all tabs
-- Album art extracted and cached from audio file metadata
+- Album art automatically extracted and cached
 
-### 🎤 Synced Lyrics
+### Listening Stats & Backup
+- **Minutes listened**, **unique songs**, **listening streak**, and **skip rate**
+- **Heatmap** showing when you listen (AM / PM / Night × Day of week)
+- **Top artists** and **Genre breakdowns**
+- **Portable Library Backup**: Export and import your entire listening history, lyrics, and metadata to a portable `.json` file that survives across devices.
+
+### Synced Lyrics
 - Fetches synced lyrics from lrclib.net automatically
 - Lyrics scroll in real-time with playback, centered on the active line
-- Tap any lyric line to seek to that timestamp
-- Lyrics peek card on the Now Playing screen with a tap-to-expand full view
+- Tap any lyric line to instantly seek to that timestamp
 
-### 📊 Listening Stats
-- **Minutes listened**, **unique songs**, **listening streak**, and **skip rate**
-- Filterable by time period: Week, Month, Quarter, All Time
-- **Heatmap** showing when you listen (AM / PM / Night × Day of week)
-- **Genre breakdown** with percentage bars
-- **Top artists** ranked by play count
-
-### 🎁 Wrapped Recaps
-- **"Bold Rendition" Design(NOT FIXED)**: A premium 8-card swipeable slideshow featuring dynamic organic/geometric hybrids and floating card aesthetics.
+### Wrapped Recaps (Bop Recap)
+- **"Bold Rendition" Design**: A premium 8-card swipeable slideshow featuring dynamic organic/geometric hybrids and floating card aesthetics.
 - **Dual-Engine AI**: 
-    - **Local GGUF (Mobile AI)**: Full support for on-device LLMs (e.g., TinyLlama) via `llama_cpp_dart`.
-- **Automated Delivery**:
-    - **Smart Triggers**: Recaps only generate once a month to save resources.
-    - **End-of-Month Notification**: Automatically "ninja" generates the monthly recap on the day before the last day of the month and triggers a system notification.
-- **Month/Year Context**: Monthly recaps now dynamically display the target month for easier context.
+    - **Local GGUF (Mobile AI)**: Full support for on-device LLMs via `llama_cpp_dart`.
 - **Shareable Stories**: High-contrast summary cards ready for social sharing.
 
-### 🤖 AI-Powered Discovery & Curation
-- **Global Status Indicator**: A centered "AI Pill" with real-time feedback. Includes a 💤 **Moon Icon** for sleeping states (RAM freed) and a ✅ **Checkmark** for ready/complete states.
-- **5-Second Auto-Dismiss**: Status notifications intelligently fade away after 5 seconds to keep the UI clean.
-- **Hybrid Curation Algorithm**: A proprietary "Twist" that balances three signals:
-    - **Vibe Match (60%)**: LLM-driven mood analysis for discovery across the entire library.
-    - **Genre Anchor (20%)**: Keeps the curation relevant to the target genre.
-    - **Habit Loyalty (20%)**: Respects your most-played tracks and recency.
-- **Selective Curation**: AI playlists now have dynamic song counts (10–35 tracks), mimicking a human curator's selective ear.
+### AI-Powered Discovery & Curation
+- **Intelligent Fallbacks**: Smart Playlists dynamically drop back to algorithm-only mode if AI generation fails or is disabled.
+- **Selective Curation**: AI playlists feature dynamic song counts (10–35 tracks), mimicking a human curator's selective ear.
 
-### ⚡ Performance & Stability
-- **Persistent Smart Playlists**: Playlists are now cached to disk (JSON formatted) and only refresh once a day, ensuring instant load times on app launch.
-- **Global Image Caching**: Strict memory limits (50MB / 100 images) to prevent RAM bloat on Android devices.
-- **Selective UI Rebuilds**: Optimized `NowPlayingScreen` and `LyricsScreen` using selective state watchers, ensuring 60FPS.
-- **Data Efficiency**: Refactored database queries for stats and playlist covers to eliminate 1+N loading bottlenecks.
-
-### 📚 Library Management
+### Library Management
 - **All Songs** listing with search, sort by artist/album
 - **Multi-Select Bulk Editing**: Long-press to select multiple songs for bulk metadata updates or removal.
-- **Smart Metadata Editor**:
-    - **Manual Overrides**: Apply titles/artists to multiple songs at once.
-    - **Smart Auto-Fill**: Toggles between "Overwrite All" and "Fill Missing Only" for effortless library cleanup.
-- **Liked Songs** collection with quick-toggle hearts
-- **Playlists** — create, add/remove songs, delete
+- **Smart Metadata Editor**: Manual overrides and Smart Auto-Fill for effortless library cleanup.
 - **Rescan** button to pick up newly added files
 
-### 🔍 Search
-- Full text search across title, artist, and album
-- Genre-based category grid for quick browsing
-
-### 👤 Profile & Settings
-- User profile with stats summary
-- Wrapped cadence settings
-- **Local AI Configuration** — pick your preferred GGUF model file
-- Lyrics source management
-
-## Tech Stack
-
-Flutter 3 · Riverpod 2 · Isar 3 · llama_cpp_dart · audio_service · lrclib.net
+### Tech Stack
+Flutter 3 · Riverpod 2 · Isar 3 · llama_cpp_dart · just_audio · lrclib.net
