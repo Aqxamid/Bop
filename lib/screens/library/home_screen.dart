@@ -142,11 +142,6 @@ class HomeScreen extends ConsumerWidget {
         const _AiCuratedRow(),
         const SizedBox(height: 16),
 
-        // ── Editor's Picks ──────────────────────────
-        const _SectionHeader(title: "Editor's Picks"),
-        const SizedBox(height: 6),
-        const _EditorsPicksRow(),
-        const SizedBox(height: 16),
 
         // ── Playlist Gems ───────────────────────────
         const _SectionHeader(title: "Discover Gems"),
@@ -264,34 +259,6 @@ class _AiCuratedRow extends ConsumerWidget {
       },
       loading: () => const SizedBox(height: 120, child: Center(child: CircularProgressIndicator(color: BopTheme.green))),
       error: (_, __) => const Text('Unable to curate playlists', style: TextStyle(color: BopTheme.textMuted)),
-    );
-  }
-}
-
-class _EditorsPicksRow extends ConsumerWidget {
-  const _EditorsPicksRow();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final songsAsync = ref.watch(editorPicksProvider);
-    return songsAsync.when(
-      data: (list) {
-        if (list.isEmpty) return const SizedBox.shrink();
-        return SizedBox(
-          height: 180,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            itemCount: list.length,
-            separatorBuilder: (_, __) => const SizedBox(width: 16),
-            itemBuilder: (context, i) {
-              final s = list[i];
-              return _SongHorizontalItem(song: s, queue: list, index: i);
-            },
-          ),
-        );
-      },
-      loading: () => const SizedBox(height: 120),
-      error: (_, __) => const SizedBox.shrink(),
     );
   }
 }
