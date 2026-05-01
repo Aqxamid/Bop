@@ -47,16 +47,13 @@ class _ArtistScreenState extends ConsumerState<ArtistScreen>
 
   @override
   Widget build(BuildContext context) {
-    final allSongs = ref.watch(allSongsProvider);
+    final artistSongsAsync = ref.watch(artistSongsProvider(widget.artistName));
     final playerState = ref.watch(playerProvider);
 
     return Scaffold(
       backgroundColor: BopTheme.background,
-      body: allSongs.when(
-        data: (songs) {
-          final artistSongs = songs
-              .where((s) => s.artist.toLowerCase() == widget.artistName.toLowerCase())
-              .toList();
+      body: artistSongsAsync.when(
+        data: (artistSongs) {
 
           final artSong = artistSongs.cast<Song?>().firstWhere(
             (s) => s!.artBytes != null && s.artBytes!.isNotEmpty,

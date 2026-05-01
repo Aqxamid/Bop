@@ -83,24 +83,30 @@ class NotificationService {
     } catch (_) {}
 
     final quotes = [
-      "Bop it, don't stop it. Your music misses you!",
-      "Ready for another round of ear candy? Bop is waiting.",
-      "A new week means new beats. Let's get Bopping!",
-      "Your soundtrack is incomplete without today's sessions.",
-      "Feeling musical? Your favorite tracks are just a tap away.",
-      "The rhythm is calling. Answer it on Bop.",
-      "Rediscover your vibe. Your top tracks are ready.",
-      "Music is the soul's language. Speak Bop today.",
-      "Don't let the silence win. Turn up the Bop.",
-      "Your library is gathering digital dust! Let's play some music.",
-      "Beat the blues with some Bop. Jump back in!",
-      "Your ears deserve the best. They deserve Bop.",
+      "Your ears called. They demand their weekly soundtrack.",
+      "Time to face the music. Literally. Your weekly stats are in.",
+      "We judged your music taste so you don't have to.",
+      "Another week of pretending your playlist isn't entirely chaotic.",
+      "Spoiler alert: You listened to that one song way too much.",
+      "Let's see if you finally diversified your listening habits. (Probably not).",
+      "Your weekly audio footprint is ready for inspection.",
+      "Data doesn't lie, but your 'Guilty Pleasures' playlist sure does.",
+      "Ready to see exactly how much time you spent avoiding reality?",
     ];
     final quote = quotes[Random().nextInt(quotes.length)];
 
+    final titles = [
+      "Your Weekly Autopsy",
+      "The Damage is Done",
+      "Weekly Audio Receipts",
+      "Music Math: Weekly Edition",
+      "Your Weekly Soundtrack",
+    ];
+    final title = titles[Random().nextInt(titles.length)];
+
     return (
-      title: 'Weekly Wrap-up 📈',
-      body: 'Your #1 song: $topSongText. $quote',
+      title: title,
+      body: 'Top track: $topSongText. $quote',
     );
   }
 
@@ -111,10 +117,29 @@ class NotificationService {
     
     final scheduledDate = tz.TZDateTime(tz.local, lastDay.year, lastDay.month, lastDay.day, 20);
 
+    final titles = [
+      "Monthly Reality Check",
+      "The End of Month Vibe Check",
+      "Thirty Days of Audio History",
+      "Monthly Music Receipts",
+      "Your Sonic Footprint"
+    ];
+    
+    final bodies = [
+      "Time to see exactly what you used to block out the world this month.",
+      "Your monthly stats are calculated. Brace yourself.",
+      "Let's review the soundtrack of your last 30 days.",
+      "The data is in. Yes, you really listened to that song that much.",
+      "Your monthly listening habits, exposed for your viewing pleasure.",
+    ];
+    
+    final title = titles[Random().nextInt(titles.length)];
+    final body = bodies[Random().nextInt(bodies.length)];
+
     await _scheduleRecap(
       id: 999,
-      title: 'Your Bop Recap is Ready! 🎵',
-      body: "Take a look at your listening habits from this month.",
+      title: title,
+      body: body,
       date: scheduledDate,
       components: DateTimeComponents.dayOfMonthAndTime,
     );
@@ -126,10 +151,28 @@ class NotificationService {
 
     if (now.isAfter(scheduledDate)) return; // Already passed for this year
 
+    final titles = [
+      "The Final Boss of Recaps",
+      "Your Year in Audio",
+      "The Ultimate Vibe Check",
+      "365 Days of Escapism",
+      "Your Yearly Sonic Receipts"
+    ];
+    
+    final bodies = [
+      "A whole year of questionable music choices, summarized nicely.",
+      "It's time. Your definitive annual listening data has arrived.",
+      "Ready to see what got you through the year?",
+      "The annual judgment day for your music taste is here.",
+    ];
+    
+    final title = titles[Random().nextInt(titles.length)];
+    final body = bodies[Random().nextInt(bodies.length)];
+
     await _scheduleRecap(
       id: 1111,
-      title: 'Yearly Bop Recap! 🎆',
-      body: 'Your 2026 musical journey is ready to be shared.',
+      title: title,
+      body: body,
       date: scheduledDate,
       components: DateTimeComponents.dateAndTime,
     );
@@ -143,11 +186,13 @@ class NotificationService {
     required DateTimeComponents components,
   }) async {
     const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
-      'recap_reminders',
+      'recap_reminders_v2',
       'Recap Reminders',
       channelDescription: 'Notifications to remind you when your Bop Recap is ready.',
       importance: Importance.max,
       priority: Priority.high,
+      sound: RawResourceAndroidNotificationSound('bop_notification'),
+      playSound: true,
     );
 
     const NotificationDetails details = NotificationDetails(android: androidDetails);
@@ -174,19 +219,21 @@ class NotificationService {
       title = content.title;
       body = content.body;
     } else if (type == 'monthly') {
-      title = 'Your Bop Recap is Ready! 🎵';
+      title = 'Monthly Reality Check';
       body = "Take a look at your listening habits from this month.";
     } else if (type == 'annual') {
-      title = 'Yearly Bop Recap! 🎆';
-      body = 'Your 2026 musical journey is ready to be shared.';
+      title = 'Your Year in Audio';
+      body = 'Your musical journey is ready to be shared.';
     }
 
     const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
-      'recap_reminders',
+      'recap_reminders_v2',
       'Recap Reminders',
       channelDescription: 'Notifications to remind you when your Bop Recap is ready.',
       importance: Importance.max,
       priority: Priority.high,
+      sound: RawResourceAndroidNotificationSound('bop_notification'),
+      playSound: true,
     );
     const NotificationDetails details = NotificationDetails(android: androidDetails);
     

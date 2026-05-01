@@ -66,28 +66,30 @@ class _AnimatedEqualizerState extends State<AnimatedEqualizer>
     final barWidth = widget.size / 5;
     final gap = widget.size / 10;
 
-    return SizedBox(
-      width: widget.size,
-      height: widget.size,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: List.generate(_barCount, (i) {
-          return AnimatedBuilder(
-            animation: _animations[i],
-            builder: (_, __) {
-              return Container(
-                width: barWidth,
-                height: widget.size * _animations[i].value,
-                margin: EdgeInsets.only(right: i < _barCount - 1 ? gap : 0),
-                decoration: BoxDecoration(
-                  color: widget.color,
-                  borderRadius: BorderRadius.circular(barWidth / 2),
-                ),
-              );
-            },
-          );
-        }),
+    return RepaintBoundary(
+      child: SizedBox(
+        width: widget.size,
+        height: widget.size,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: List.generate(_barCount, (i) {
+            return AnimatedBuilder(
+              animation: _animations[i],
+              builder: (_, __) {
+                return Container(
+                  width: barWidth,
+                  height: widget.size * _animations[i].value,
+                  margin: EdgeInsets.only(right: i < _barCount - 1 ? gap : 0),
+                  decoration: BoxDecoration(
+                    color: widget.color,
+                    borderRadius: BorderRadius.circular(barWidth / 2),
+                  ),
+                );
+              },
+            );
+          }),
+        ),
       ),
     );
   }

@@ -227,7 +227,8 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
         // ── All Songs / Playlists list (lazy) ──────────
         if (filter == LibraryFilter.playlists)
           ref.watch(playlistsStreamProvider).when(
-            data: (list) => SliverList(
+            data: (list) => SliverFixedExtentList(
+              itemExtent: 68.0,
               delegate: SliverChildBuilderDelegate(
                 (context, i) {
                   final p = list[i];
@@ -300,7 +301,8 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                   
                 return SliverPadding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
-                  sliver: SliverList.builder(
+                  sliver: SliverFixedExtentList.builder(
+                    itemExtent: 64.0,
                     itemCount: artistsList.length,
                     itemBuilder: (_, i) {
                       final artist = artistsList[i].key;
@@ -351,7 +353,8 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                   
                 return SliverPadding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
-                  sliver: SliverList.builder(
+                  sliver: SliverFixedExtentList.builder(
+                    itemExtent: 64.0,
                     itemCount: albumsList.length,
                     itemBuilder: (_, i) {
                       final album = albumsList[i].key;
@@ -397,7 +400,8 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
 
               return SliverPadding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
-                sliver: SliverList.builder(
+                sliver: SliverFixedExtentList.builder(
+                  itemExtent: 64.0,
                   itemCount: filteredSongs.length,
                   itemBuilder: (_, i) {
                     final song = filteredSongs[i];

@@ -45,18 +45,14 @@ class _AlbumScreenState extends ConsumerState<AlbumScreen>
     } catch (_) {}
   }
 
-  @override
   Widget build(BuildContext context) {
-    final allSongs = ref.watch(allSongsProvider);
+    final albumSongsAsync = ref.watch(albumSongsProvider(widget.albumName));
     final playerState = ref.watch(playerProvider);
 
     return Scaffold(
       backgroundColor: BopTheme.background,
-      body: allSongs.when(
-        data: (songs) {
-          final albumSongs = songs
-              .where((s) => s.album.toLowerCase() == widget.albumName.toLowerCase())
-              .toList();
+      body: albumSongsAsync.when(
+        data: (albumSongs) {
 
           final artSong = albumSongs.cast<Song?>().firstWhere(
             (s) => s!.artBytes != null && s.artBytes!.isNotEmpty,

@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:audio_service/audio_service.dart';
+import 'package:audio_session/audio_session.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -182,6 +183,9 @@ class BopAudioHandler extends BaseAudioHandler with SeekHandler {
 late BopAudioHandler audioHandler;
 
 Future<void> initAudioService() async {
+  final session = await AudioSession.instance;
+  await session.configure(const AudioSessionConfiguration.music());
+
   audioHandler = await AudioService.init(
     builder: () => BopAudioHandler(),
     config: const AudioServiceConfig(
@@ -272,18 +276,21 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
           _savePosition(pos.inMilliseconds);
         }
 
-        // ── Gapless (Early Skip + Crossfade) Logic ──
+        // ── Manual Gapless/Crossfade Logic ──
         final gaplessEnabled = ref.read(settingsProvider).gaplessPlayback;
         if (gaplessEnabled && state.duration.inSeconds > 0 && state.currentIndex < state.queue.length - 1) {
           final gaplessSeconds = ref.read(settingsProvider).gaplessSeconds;
-          final skipThresholdMs = gaplessSeconds * 1000;
-          final triggerMs = skipThresholdMs + 500; // Start fading 500ms before the skip
-          
-          final remainingMs = state.duration.inMilliseconds - pos.inMilliseconds;
-          if (remainingMs > 0 && remainingMs <= triggerMs) {
-            if (!_isGaplessSkipping) {
-              _isGaplessSkipping = true;
-              unawaited(_performGaplessTransition());
+          // If the user sets it to 0, it means native gapless (no crossfade skip)
+          if (gaplessSeconds > 0) {
+            final skipThresholdMs = gaplessSeconds * 1000;
+            final triggerMs = skipThresholdMs + 500; // Start fading 500ms before the skip
+            
+            final remainingMs = state.duration.inMilliseconds - pos.inMilliseconds;
+            if (remainingMs > 0 && remainingMs <= triggerMs) {
+              if (!_isGaplessSkipping) {
+                _isGaplessSkipping = true;
+                unawaited(_performGaplessTransition());
+              }
             }
           }
         }
@@ -307,6 +314,9 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
     // Index stream (for gapless sync)
     _player.currentIndexStream.listen((index) async {
       if (mounted && index != null && index != state.currentIndex && index < state.queue.length) {
+        // Finalize previous track before transitioning
+        await _finalizeCurrentPlayEvent(skipped: false);
+
         final nextSong = state.queue[index];
         state = state.copyWith(currentIndex: index, currentSong: nextSong);
         await audioHandler.updateSongNotification(nextSong);
@@ -520,6 +530,8 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
     _saveState();
   }
 
+
+
   // ── Gapless Transition (Crossfade) ────────────────────────
   Future<void> _performGaplessTransition() async {
     const fadeOutSteps = 10;
@@ -552,6 +564,9 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
 
   // ── Skip ──────────────────────────────────────────────────
   Future<void> skipNext() async {
+    final skipped = _isSkippedEarly();
+    await _finalizeCurrentPlayEvent(skipped: skipped);
+
     if (_player.hasNext) {
       await _player.seekToNext();
     } else {
@@ -584,6 +599,9 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
       await _player.seek(Duration.zero);
       return;
     }
+
+    final skipped = _isSkippedEarly();
+    await _finalizeCurrentPlayEvent(skipped: skipped);
 
     if (_player.hasPrevious) {
       await _player.seekToPrevious();

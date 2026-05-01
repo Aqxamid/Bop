@@ -575,6 +575,9 @@ class LlmService {
 
   /// Generate a Wrapped recap paragraph.
   Future<String> generateWrappedRecap(WrappedReport report) async {
+    if (_isAiEnabled && !_modelLoaded) {
+      await loadModel();
+    }
     await _loadFuture;
     generationProgress.value = 0;
 
@@ -676,7 +679,12 @@ class LlmService {
     await DbService.instance.isar.writeTxn(() async {
       await DbService.instance.wrappedReports.put(report);
     });
-    return _generateLocal(report);
+    
+    final finalResult = await _generateLocal(report);
+    if (_modelLoaded) {
+      Future.delayed(const Duration(seconds: 10), () => disposeModel());
+    }
+    return finalResult;
   }
 
   // ── RECAP PROMPTS ─────────────────────────────────────────────────────────
@@ -757,6 +765,9 @@ class LlmService {
     if (_isAiEnabled) {
       modelStatus.value = 'AI: Wrapped generation complete!';
     }
+    if (_modelLoaded) {
+      Future.delayed(const Duration(seconds: 10), () => disposeModel());
+    }
     return result;
   }
 
@@ -765,6 +776,9 @@ class LlmService {
   Future<List<SmartPlaylistData>> generateSmartPlaylists() async {
     print('[LLM] generateSmartPlaylists() called');
     
+    if (_isAiEnabled && !_modelLoaded) {
+      await loadModel();
+    }
     // Ensure we wait for any pending model load if AI is enabled
     if (_isAiEnabled && _loadFuture != null) {
       await _loadFuture;
@@ -878,6 +892,10 @@ class LlmService {
     // This prevents "failing upward" and caching non-AI playlists when the model was just slow to load.
     if (!_isAiEnabled || _modelLoaded) {
       await _savePlaylistsToCache();
+    }
+
+    if (_modelLoaded) {
+      Future.delayed(const Duration(seconds: 10), () => disposeModel());
     }
 
     return result;

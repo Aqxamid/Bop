@@ -56,8 +56,8 @@ Future<void> main() async {
 
   // ── Global Image Cache Limits ─────────────────────────
   // Prevents RAM bloat from large libraries of album art.
-  PaintingBinding.instance.imageCache.maximumSize = 100; // Limit by # of images
-  PaintingBinding.instance.imageCache.maximumSizeBytes = 50 * 1024 * 1024; // Limit to 50MB
+  PaintingBinding.instance.imageCache.maximumSize = 1000; // Limit by # of images
+  PaintingBinding.instance.imageCache.maximumSizeBytes = 250 * 1024 * 1024; // Limit to 250MB
 
   runApp(ProviderScope(child: BopApp(hasOnboarded: hasOnboarded)));
 }

@@ -89,7 +89,15 @@ class BackupService {
 
     final jsonStr = jsonEncode(backupData);
     final directory = await getApplicationDocumentsDirectory();
-    final file = File('${directory.path}/beatspill_backup_${DateTime.now().millisecondsSinceEpoch}.json');
+    
+    final now = DateTime.now();
+    final mm = now.month.toString().padLeft(2, '0');
+    final dd = now.day.toString().padLeft(2, '0');
+    final yy = (now.year % 100).toString().padLeft(2, '0');
+    final hh = now.hour.toString().padLeft(2, '0');
+    final min = now.minute.toString().padLeft(2, '0');
+    
+    final file = File('${directory.path}/bop_backup_${mm}${dd}${yy}_${hh}${min}.json');
     await file.writeAsString(jsonStr);
 
     return file.path;

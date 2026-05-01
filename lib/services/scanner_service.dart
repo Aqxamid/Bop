@@ -43,6 +43,7 @@ class ScannerService {
     int added = 0;
     final total = deviceSongs.length;
 
+    final batch = <Song>[];
     for (int i = 0; i < deviceSongs.length; i++) {
       final info = deviceSongs[i];
       onProgress?.call(i + 1, total);
@@ -88,9 +89,14 @@ class ScannerService {
         ..durationMs = info.duration ?? 0
         ..artBytes = (artBytes != null && artBytes.isNotEmpty) ? artBytes : null;
 
-      await _db.isar.writeTxn(() async {
-        await _db.songs.put(song);
-      });
+      batch.add(song);
+      if (batch.length >= 50) {
+        await _db.isar.writeTxn(() async {
+          await _db.songs.putAll(batch);
+        });
+        batch.clear();
+        await Future.delayed(Duration.zero); // yield to UI
+      }
       
       // Kick off metadata enrichment in the background if tags are missing
       if (MetadataService.instance.isArtistMissing(song.artist) || 
@@ -106,14 +112,22 @@ class ScannerService {
       added++;
     }
 
+    if (batch.isNotEmpty) {
+      await _db.isar.writeTxn(() async {
+        await _db.songs.putAll(batch);
+      });
+    }
+
     final allSavedSongs = await _db.songs.where().findAll();
     final toDelete = <int>[];
-    for (final s in allSavedSongs) {
-      if (!File(s.filePath).existsSync()) {
+    for (int i = 0; i < allSavedSongs.length; i++) {
+      final s = allSavedSongs[i];
+      if (!await File(s.filePath).exists()) {
         // Only delete from DB if it's literally gone from the disk.
         // If it's just hidden, we keep the entry so it stays hidden.
         toDelete.add(s.id);
       }
+      if (i % 100 == 0) await Future.delayed(Duration.zero); // yield to UI
     }
     if (toDelete.isNotEmpty) {
       await _db.isar.writeTxn(() async {

@@ -157,3 +157,13 @@ final playlistGemsProvider = FutureProvider<List<Song>>((ref) async {
   return gems.take(20).toList();
 });
 
+// ── Artist & Album Filter Caching ────────────────────────────
+final artistSongsProvider = FutureProvider.family<List<Song>, String>((ref, artist) async {
+  final allSongs = await ref.watch(allSongsProvider.future);
+  return allSongs.where((s) => s.artist.toLowerCase() == artist.toLowerCase()).toList();
+});
+
+final albumSongsProvider = FutureProvider.family<List<Song>, String>((ref, album) async {
+  final allSongs = await ref.watch(allSongsProvider.future);
+  return allSongs.where((s) => s.album.toLowerCase() == album.toLowerCase()).toList();
+});
