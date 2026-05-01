@@ -10,8 +10,9 @@ import 'package:permission_handler/permission_handler.dart';
 import 'services/db_service.dart';
 import 'services/llm_service.dart';
 import 'theme/app_theme.dart';
-import 'screens/auth/onboarding_screen.dart';
+import 'screens/onboarding_screen.dart';
 import 'screens/main_shell.dart';
+
 import 'screens/library/scanning_screen.dart';
 import 'services/notification_service.dart';
 import 'providers/player_provider.dart';

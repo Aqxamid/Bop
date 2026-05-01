@@ -21,9 +21,6 @@ dependencies:
   # Audio playback
   just_audio: ^0.9.36
 
-  # Google sign-in
-  google_sign_in: ^6.2.1
-
   # Lyrics (lrclib.net)
   http: ^1.2.1
 

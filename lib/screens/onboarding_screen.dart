@@ -2,8 +2,9 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:file_picker/file_picker.dart';
-import '../../services/llm_service.dart';
-import '../../theme/app_theme.dart';
+import '../services/llm_service.dart';
+import '../theme/app_theme.dart';
+
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});
