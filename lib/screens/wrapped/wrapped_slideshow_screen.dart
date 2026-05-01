@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:isar/isar.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:just_audio/just_audio.dart';
@@ -1915,8 +1916,14 @@ class _ShareCardState extends State<_ShareCard> {
     try {
       final theme = RecapTheme.get(widget.report.generatedAt.month, widget.report.cadence == 'yearly');
       
+      Uint8List? bgBytes;
+      if (isReceipt) {
+        final data = await rootBundle.load('assets/images/receipt_bg.png');
+        bgBytes = data.buffer.asUint8List();
+      }
+
       final Widget summaryWidget = isReceipt 
-          ? WrappedReceiptWidget(report: widget.report, username: _username)
+          ? WrappedReceiptWidget(report: widget.report, username: _username, bgBytes: bgBytes)
           : _RecapSummaryCard(
               report: widget.report,
               theme: theme,

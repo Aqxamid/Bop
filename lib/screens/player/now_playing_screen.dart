@@ -453,6 +453,10 @@ class _QueueModal extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final playerState = ref.watch(playerProvider);
     final queue = playerState.queue;
+    final isShuffled = playerState.shuffleEnabled;
+    final effectiveIndices = (isShuffled && playerState.effectiveIndices != null && playerState.effectiveIndices!.length == queue.length)
+        ? playerState.effectiveIndices!
+        : List.generate(queue.length, (i) => i);
 
     return Container(
       height: MediaQuery.of(context).size.height * 0.7,
@@ -485,65 +489,81 @@ class _QueueModal extends ConsumerWidget {
           ),
           const SizedBox(height: 12),
           Expanded(
-            child: ReorderableListView.builder(
-              itemCount: queue.length,
-              onReorder: (oldIndex, newIndex) {
-                if (newIndex > oldIndex) newIndex -= 1;
-                ref.read(playerProvider.notifier).moveQueueItem(oldIndex, newIndex);
-              },
-              itemBuilder: (context, index) {
-                final song = queue[index];
-                final isCurrent = index == playerState.currentIndex;
-                return ListTile(
-                  key: ValueKey('queue_${song.id}_$index'),
-                  leading: ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
-                    child: SizedBox(
-                      width: 40,
-                      height: 40,
-                      child: song.artBytes != null && song.artBytes!.isNotEmpty
-                          ? Image.memory(
-                              Uint8List.fromList(song.artBytes!),
-                              fit: BoxFit.cover,
-                              gaplessPlayback: true,
-                              cacheWidth: 80,
-                              cacheHeight: 80,
-                            )
-                          : Container(color: Colors.grey[900], child: const Icon(Icons.music_note, color: Colors.white24, size: 20)),
-                    ),
-                  ),
-                  title: Text(song.title,
-                      style: TextStyle(
-                          color: isCurrent ? BopTheme.green : Colors.white,
-                          fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
-                          fontSize: 14),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis),
-                  subtitle: Text(song.artist,
-                      style: const TextStyle(color: BopTheme.textSecondary, fontSize: 11)),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (!isCurrent)
-                        IconButton(
-                          icon: const Icon(Icons.close, color: Colors.white38, size: 18),
-                          onPressed: () => ref.read(playerProvider.notifier).removeFromQueue(index),
-                        ),
-                      ReorderableDragStartListener(
-                        index: index,
-                        child: const Icon(Icons.reorder, color: Colors.white24),
-                      ),
-                    ],
-                  ),
-                  onTap: () {
-                    ref.read(playerProvider.notifier).skipTo(index);
+            child: isShuffled
+              ? ListView.builder(
+                  itemCount: queue.length,
+                  itemBuilder: (context, uiIndex) {
+                    final realIndex = effectiveIndices[uiIndex];
+                    final song = queue[realIndex];
+                    final isCurrent = realIndex == playerState.currentIndex;
+                    return _buildSongTile(context, ref, song, realIndex, isCurrent, isShuffled);
                   },
-                );
-              },
-            ),
+                )
+              : ReorderableListView.builder(
+                  itemCount: queue.length,
+                  onReorder: (oldIndex, newIndex) {
+                    if (newIndex > oldIndex) newIndex -= 1;
+                    ref.read(playerProvider.notifier).moveQueueItem(oldIndex, newIndex);
+                  },
+                  itemBuilder: (context, uiIndex) {
+                    final realIndex = effectiveIndices[uiIndex];
+                    final song = queue[realIndex];
+                    final isCurrent = realIndex == playerState.currentIndex;
+                    return _buildSongTile(context, ref, song, realIndex, isCurrent, isShuffled);
+                  },
+                ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildSongTile(BuildContext context, WidgetRef ref, Song song, int realIndex, bool isCurrent, bool isShuffled) {
+    return ListTile(
+      key: ValueKey('queue_${song.id}_$realIndex'),
+      leading: ClipRRect(
+        borderRadius: BorderRadius.circular(4),
+        child: SizedBox(
+          width: 40,
+          height: 40,
+          child: song.artBytes != null && song.artBytes!.isNotEmpty
+              ? Image.memory(
+                  Uint8List.fromList(song.artBytes!),
+                  fit: BoxFit.cover,
+                  gaplessPlayback: true,
+                  cacheWidth: 80,
+                  cacheHeight: 80,
+                )
+              : Container(color: Colors.grey[900], child: const Icon(Icons.music_note, color: Colors.white24, size: 20)),
+        ),
+      ),
+      title: Text(song.title,
+          style: TextStyle(
+              color: isCurrent ? BopTheme.green : Colors.white,
+              fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+              fontSize: 14),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis),
+      subtitle: Text(song.artist,
+          style: const TextStyle(color: BopTheme.textSecondary, fontSize: 11)),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (!isCurrent)
+            IconButton(
+              icon: const Icon(Icons.close, color: Colors.white38, size: 18),
+              onPressed: () => ref.read(playerProvider.notifier).removeFromQueue(realIndex),
+            ),
+          if (!isShuffled)
+            ReorderableDragStartListener(
+              index: realIndex,
+              child: const Icon(Icons.reorder, color: Colors.white24),
+            ),
+        ],
+      ),
+      onTap: () {
+        ref.read(playerProvider.notifier).skipTo(realIndex);
+      },
     );
   }
 }

@@ -166,12 +166,15 @@ class DbService {
         .findAll();
 
     final counts = <String, int>{};
+    final durationMs = <String, int>{};
     for (final e in events) {
       counts[e.artist] = (counts[e.artist] ?? 0) + 1;
+      durationMs[e.artist] = (durationMs[e.artist] ?? 0) + e.listenedMs;
     }
-    final sorted = counts.entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
-    return sorted.take(limit).toList();
+    final sorted = counts.keys.toList()
+      ..sort((a, b) => durationMs[b]!.compareTo(durationMs[a]!));
+    
+    return sorted.take(limit).map((k) => MapEntry(k, counts[k]!)).toList();
   }
 
   Future<List<MapEntry<Song, int>>> topSongsForRange(
@@ -185,13 +188,15 @@ class DbService {
         .findAll();
 
     final counts = <String, int>{}; 
+    final durationMs = <String, int>{};
     for (final e in events) {
       final key = "${e.songTitle}|${e.artist}";
       counts[key] = (counts[key] ?? 0) + 1;
+      durationMs[key] = (durationMs[key] ?? 0) + e.listenedMs;
     }
 
-    final sortedKeys = counts.entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
+    final sortedKeys = counts.keys.toList()
+      ..sort((a, b) => durationMs[b]!.compareTo(durationMs[a]!));
     
     final topKeys = sortedKeys.take(limit).toList();
     if (topKeys.isEmpty) return [];
@@ -201,13 +206,13 @@ class DbService {
     final result = <MapEntry<Song, int>>[];
 
     for (final entry in topKeys) {
-      final parts = entry.key.split('|');
+      final parts = entry.split('|');
       final title = parts[0];
       final artist = parts[1];
       
       final song = allSongs.where((s) => s.title == title && s.artist == artist).firstOrNull;
       if (song != null) {
-        result.add(MapEntry(song, entry.value));
+        result.add(MapEntry(song, counts[entry]!));
       }
     }
     return result;

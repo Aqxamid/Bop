@@ -38,6 +38,7 @@ class PlayerState {
   final bool shuffleEnabled;
   final PlayerRepeatMode repeatMode;
   final String? djTransitionMsg;
+  final List<int>? effectiveIndices;
 
   const PlayerState({
     this.currentSong,
@@ -48,6 +49,7 @@ class PlayerState {
     this.shuffleEnabled = false,
     this.repeatMode = PlayerRepeatMode.off,
     this.djTransitionMsg,
+    this.effectiveIndices,
   });
 
   PlayerState copyWith({
@@ -59,6 +61,7 @@ class PlayerState {
     bool? shuffleEnabled,
     PlayerRepeatMode? repeatMode,
     String? djTransitionMsg,
+    List<int>? effectiveIndices,
     bool clearDjMsg = false,
     bool clearSong = false,
   }) {
@@ -71,6 +74,7 @@ class PlayerState {
       shuffleEnabled: shuffleEnabled ?? this.shuffleEnabled,
       repeatMode: repeatMode ?? this.repeatMode,
       djTransitionMsg: clearDjMsg ? null : (djTransitionMsg ?? this.djTransitionMsg),
+      effectiveIndices: effectiveIndices ?? this.effectiveIndices,
     );
   }
 }
@@ -324,6 +328,13 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
       }
     });
 
+    // Sequence state (for accurate shuffled queue display)
+    _player.sequenceStateStream.listen((seqState) {
+      if (mounted && seqState != null) {
+        state = state.copyWith(effectiveIndices: seqState.shuffleIndices);
+      }
+    });
+
     // Playing state
     _player.playingStream.listen((playing) {
       if (mounted) {
@@ -459,7 +470,15 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
       // If we remove the current song, it's tricky. For now just keep index.
     }
     
+    
     state = state.copyWith(queue: newQueue, currentIndex: newIndex);
+    
+    // Mutate the actual audio source to keep playback in sync with UI
+    final source = _player.audioSource as ConcatenatingAudioSource?;
+    if (source != null && index < source.length) {
+      source.removeAt(index);
+    }
+    
     _saveState();
   }
 
@@ -481,6 +500,13 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
     }
 
     state = state.copyWith(queue: newQueue, currentIndex: nextCurrent);
+    
+    // Mutate the actual audio source to keep playback in sync with UI
+    final source = _player.audioSource as ConcatenatingAudioSource?;
+    if (source != null && oldIndex < source.length && newIndex < source.length) {
+      source.move(oldIndex, newIndex);
+    }
+    
     _saveState();
   }
 

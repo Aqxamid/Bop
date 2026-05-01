@@ -1,6 +1,6 @@
 name: bop
 description: Bop v2 — the ultimate offline music player with premium on-device recaps.
-version: 2.6.3+5
+version: 2.6.4+6
 
 environment:
   sdk: ">=3.0.0 <4.0.0"
@@ -61,6 +61,7 @@ dependencies:
   screenshot: ^3.0.0
   flutter_local_notifications: ^17.2.1
   timezone: ^0.9.4
+  barcode_widget: ^2.0.4
 
 
 
@@ -84,6 +85,7 @@ flutter:
   uses-material-design: true
   assets:
     - assets/
+    - assets/images/
 
 dependency_overrides:
   path_provider_foundation: <2.4.0

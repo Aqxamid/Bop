@@ -1,9 +1,11 @@
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:path_provider/path_provider.dart';
 import 'package:screenshot/screenshot.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/playlist.dart';
 import '../models/song.dart';
 import '../widgets/receipt_widget.dart';
@@ -11,6 +13,11 @@ import '../theme/app_theme.dart';
 
 class ShareService {
   static final ScreenshotController _screenshotController = ScreenshotController();
+
+  static Future<Uint8List> _loadReceiptBg() async {
+    final data = await rootBundle.load('assets/images/receipt_bg.png');
+    return data.buffer.asUint8List();
+  }
 
   static Future<void> sharePlaylistReceipt(BuildContext context, Playlist playlist, {List<Song>? songs}) async {
     showDialog(
@@ -25,9 +32,13 @@ class ShareService {
       }
       final List<Song> listToShare = songs ?? playlist.songs.toList();
       
+      final prefs = await SharedPreferences.getInstance();
+      final username = prefs.getString('username') ?? 'GUEST';
+      final bgBytes = await _loadReceiptBg();
+
       final image = await _screenshotController.captureFromWidget(
-        Material(child: ReceiptWidget(playlist: playlist, songs: listToShare)),
-        delay: const Duration(milliseconds: 300),
+        Material(child: ReceiptWidget(playlist: playlist, songs: listToShare, username: username, bgBytes: bgBytes)),
+        delay: const Duration(milliseconds: 1500),
       );
 
       if (context.mounted) Navigator.pop(context);
@@ -109,7 +120,7 @@ class ShareService {
     try {
       final image = await _screenshotController.captureFromWidget(
         summaryCard,
-        delay: const Duration(milliseconds: 200),
+        delay: const Duration(milliseconds: 1500),
       );
 
       if (context.mounted) Navigator.pop(context);

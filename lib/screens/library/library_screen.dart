@@ -552,8 +552,9 @@ class _SongTile extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     return Container(
       decoration: BoxDecoration(
-        color: isSelected ? BopTheme.green.withOpacity(0.1) : Colors.transparent,
-        borderRadius: BorderRadius.circular(8),
+        color: isSelected ? BopTheme.green.withOpacity(0.15) : Colors.transparent,
+        borderRadius: BorderRadius.circular(12),
+        border: isSelected ? Border.all(color: BopTheme.green.withOpacity(0.3), width: 1) : null,
       ),
       child: ListTile(
         contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
