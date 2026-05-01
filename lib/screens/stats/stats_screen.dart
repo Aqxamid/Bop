@@ -29,6 +29,7 @@ class _StatsScreenState extends ConsumerState<StatsScreen> {
     final genres = ref.watch(genreBreakdownProvider);
 
     return ListView(
+      primary: true,
       padding: EdgeInsets.fromLTRB(16, MediaQuery.of(context).padding.top + 8, 16, 120),
       children: [
 
@@ -43,12 +44,12 @@ class _StatsScreenState extends ConsumerState<StatsScreen> {
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 24),
               _RecapTriggerCard(
                 generating: _generating,
                 onTap: _generateRecap,
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 24),
               GridView.count(
                 shrinkWrap: true,
                 padding: EdgeInsets.zero,
@@ -100,43 +101,25 @@ class _StatsScreenState extends ConsumerState<StatsScreen> {
                   ),
                 ],
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: 24),
               Text('Top artists this month',
                   style: Theme.of(context)
                       .textTheme
                       .titleSmall
                       ?.copyWith(fontWeight: FontWeight.w700)),
-              const SizedBox(height: 10),
+              const SizedBox(height: 6),
               topArtists.when(
-                data: (artists) {
-                  if (artists.isEmpty) {
-                    return const Padding(
-                      padding: EdgeInsets.all(16),
-                      child: Text('Play some songs to see your top artists',
-                          style: TextStyle(color: BopTheme.textMuted)),
-                    );
-                  }
-                  final maxVal = artists.first.value;
-                  return Column(
-                    children: artists
-                        .map((a) => _BarRow(
-                              label: a.key,
-                              value: a.value,
-                              max: maxVal,
-                            ))
-                        .toList(),
-                  );
-                },
+                data: (artists) => _TopArtistsChart(artists: artists),
                 loading: () => const Center(child: CircularProgressIndicator()),
                 error: (_, __) => const Text('Error loading data'),
               ),
-              const SizedBox(height: 2),
+              const SizedBox(height: 24),
               Text('When you listen',
                   style: Theme.of(context)
                       .textTheme
                       .titleSmall
                       ?.copyWith(fontWeight: FontWeight.w700)),
-              const SizedBox(height: 8),
+              const SizedBox(height: 6),
               heatmap.when(
                 data: (matrix) {
                   final condensed = _condenseHeatmap(matrix);
@@ -145,42 +128,15 @@ class _StatsScreenState extends ConsumerState<StatsScreen> {
                 loading: () => const Center(child: CircularProgressIndicator()),
                 error: (_, __) => const Text('Error loading data'),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 24),
               Text('Genre breakdown',
                   style: Theme.of(context)
                       .textTheme
                       .titleSmall
                       ?.copyWith(fontWeight: FontWeight.w700)),
-              const SizedBox(height: 0),
+              const SizedBox(height: 6),
               genres.when(
-                data: (genreMap) {
-                  if (genreMap.isEmpty) return const Text('No genre data yet');
-                  final total = genreMap.values.fold<int>(0, (sum, v) => sum + v);
-                  final sorted = genreMap.entries.toList()
-                    ..sort((a, b) => b.value.compareTo(a.value));
-                  final colors = [
-                    BopTheme.green,
-                    BopTheme.purple,
-                    BopTheme.red,
-                    BopTheme.orange,
-                    BopTheme.blue,
-                  ];
-                  return Column(
-                    children: sorted.asMap().entries.map((entry) {
-                      final pct = total > 0 ? entry.value.value / total : 0.0;
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: _BarRow(
-                          label: entry.value.key,
-                          value: (pct * 100).round(),
-                          max: 100,
-                          color: colors[entry.key % colors.length],
-                          suffix: '${(pct * 100).round()}%',
-                        ),
-                      );
-                    }).toList(),
-                  );
-                },
+                data: (genreMap) => _GenrePieChart(data: genreMap),
                 loading: () => const Center(child: CircularProgressIndicator()),
                 error: (_, __) => const Text('Error loading data'),
               ),
@@ -359,16 +315,138 @@ class _StatCard extends StatelessWidget {
   }
 }
 
-class _BarRow extends StatelessWidget {
-  final String label;
-  final int value;
-  final int max;
-  final Color color;
-  final String? suffix;
-  const _BarRow({required this.label, required this.value, required this.max, this.color = BopTheme.green, this.suffix});
+class _TopArtistsChart extends StatelessWidget {
+  final List<MapEntry<String, int>> artists;
+  const _TopArtistsChart({required this.artists});
+
   @override
   Widget build(BuildContext context) {
-    return Column(children: [Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text(label, style: const TextStyle(color: Colors.white, fontSize: 12)), Text(suffix ?? '$value', style: const TextStyle(color: BopTheme.textSecondary, fontSize: 12))]), const SizedBox(height: 4), ClipRRect(borderRadius: BorderRadius.circular(2), child: LinearProgressIndicator(value: max > 0 ? value / max : 0, backgroundColor: BopTheme.surfaceAlt, valueColor: AlwaysStoppedAnimation(color), minHeight: 5)), const SizedBox(height: 4)]);
+    if (artists.isEmpty) return const Text('Play some songs to see your top artists', style: TextStyle(color: BopTheme.textMuted));
+    final maxVal = artists.first.value;
+    
+    return SizedBox(
+      height: 160,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: artists.take(5).toList().asMap().entries.map((entry) {
+          final a = entry.value;
+          final heightFactor = maxVal > 0 ? a.value / maxVal : 0.0;
+          return Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  Text('${a.value}', style: const TextStyle(color: BopTheme.textSecondary, fontSize: 10)),
+                  const SizedBox(height: 4),
+                  Flexible(
+                    child: FractionallySizedBox(
+                      heightFactor: heightFactor,
+                      child: Container(
+                        decoration: const BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [BopTheme.green, Colors.teal],
+                            begin: Alignment.bottomCenter,
+                            end: Alignment.topCenter,
+                          ),
+                          borderRadius: BorderRadius.vertical(top: Radius.circular(4)),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(a.key, style: const TextStyle(color: Colors.white, fontSize: 10), maxLines: 1, overflow: TextOverflow.ellipsis, textAlign: TextAlign.center),
+                ],
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+}
+
+class _PieChartPainter extends CustomPainter {
+  final List<double> percentages;
+  final List<Color> colors;
+
+  _PieChartPainter({required this.percentages, required this.colors});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Rect.fromLTWH(0, 0, size.width, size.height);
+    double startAngle = -3.14159 / 2;
+    for (int i = 0; i < percentages.length; i++) {
+      final sweepAngle = percentages[i] * 2 * 3.14159;
+      final paint = Paint()
+        ..color = colors[i % colors.length]
+        ..style = PaintingStyle.fill;
+      canvas.drawArc(rect, startAngle, sweepAngle, true, paint);
+      startAngle += sweepAngle;
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _PieChartPainter oldDelegate) => true;
+}
+
+class _GenrePieChart extends StatelessWidget {
+  final Map<String, int> data;
+  const _GenrePieChart({required this.data});
+
+  @override
+  Widget build(BuildContext context) {
+    if (data.isEmpty) return const Text('No genre data yet');
+    final total = data.values.fold<int>(0, (sum, v) => sum + v);
+    final sorted = data.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+    final colors = [
+      BopTheme.green,
+      BopTheme.purple,
+      BopTheme.red,
+      BopTheme.orange,
+      BopTheme.blue,
+      Colors.cyan,
+      Colors.pink,
+    ];
+
+    List<double> percentages = [];
+    for (var entry in sorted) {
+      percentages.add(total > 0 ? entry.value / total : 0.0);
+    }
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 140,
+          height: 140,
+          child: CustomPaint(
+            painter: _PieChartPainter(percentages: percentages, colors: colors),
+          ),
+        ),
+        const SizedBox(width: 24),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: sorted.asMap().entries.map((entry) {
+              final pct = percentages[entry.key];
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  children: [
+                    Container(width: 12, height: 12, decoration: BoxDecoration(color: colors[entry.key % colors.length], shape: BoxShape.circle)),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(entry.value.key, style: const TextStyle(color: Colors.white, fontSize: 13), overflow: TextOverflow.ellipsis)),
+                    Text('${(pct * 100).round()}%', style: const TextStyle(color: BopTheme.textSecondary, fontSize: 12)),
+                  ],
+                ),
+              );
+            }).toList(),
+          ),
+        ),
+      ],
+    );
   }
 }
 

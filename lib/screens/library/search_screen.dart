@@ -65,11 +65,13 @@ class SearchScreen extends ConsumerStatefulWidget {
 
 class _SearchScreenState extends ConsumerState<SearchScreen> {
   final _controller = TextEditingController();
+  final _scrollController = ScrollController();
   String _query = '';
 
   @override
   void dispose() {
     _controller.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -78,9 +80,20 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     final allSongs = ref.watch(allSongsProvider);
     final selectedGenre = ref.watch(searchGenreProvider);
 
-    return ListView(
-      padding: EdgeInsets.fromLTRB(16, MediaQuery.of(context).padding.top + 8, 16, 120),
-      children: [
+    return PrimaryScrollController(
+      controller: _scrollController,
+      child: RawScrollbar(
+        controller: _scrollController,
+        thumbVisibility: true,
+        trackVisibility: true,
+        thickness: 6.0,
+        radius: const Radius.circular(6),
+        thumbColor: BopTheme.green.withOpacity(0.6),
+        interactive: true,
+        child: ListView(
+          controller: _scrollController,
+          padding: EdgeInsets.fromLTRB(16, MediaQuery.of(context).padding.top + 8, 16, 120),
+          children: [
 
         const Text('Search',
             style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w900)),
@@ -300,6 +313,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
             error: (_, __) => const Text('Error'),
           ),
       ],
+        ),
+      ),
     );
   }
 }

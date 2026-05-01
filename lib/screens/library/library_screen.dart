@@ -31,11 +31,24 @@ final libraryPlaylistSelectionProvider = StateProvider<Set<int>>((ref) => {});
 final selectionActiveProvider = StateProvider<bool>((ref) => false);
 final playlistSelectionActiveProvider = StateProvider<bool>((ref) => false);
 
-class LibraryScreen extends ConsumerWidget {
+class LibraryScreen extends ConsumerStatefulWidget {
   const LibraryScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<LibraryScreen> createState() => _LibraryScreenState();
+}
+
+class _LibraryScreenState extends ConsumerState<LibraryScreen> {
+  final ScrollController _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final likedSongs = ref.watch(likedSongsProvider);
     final allSongs = ref.watch(allSongsProvider);
     final filter = ref.watch(libraryFilterProvider);
@@ -44,8 +57,19 @@ class LibraryScreen extends ConsumerWidget {
     final inSelectionMode = ref.watch(selectionActiveProvider) || selection.isNotEmpty;
     final inPlaylistSelectionMode = ref.watch(playlistSelectionActiveProvider) || playlistSelection.isNotEmpty;
 
-    return CustomScrollView(
-      slivers: [
+    return PrimaryScrollController(
+      controller: _scrollController,
+      child: RawScrollbar(
+        controller: _scrollController,
+        thumbVisibility: true,
+        trackVisibility: true,
+        thickness: 6.0,
+        radius: const Radius.circular(6),
+        thumbColor: BopTheme.green.withOpacity(0.6),
+        interactive: true,
+        child: CustomScrollView(
+          controller: _scrollController,
+          slivers: [
         SliverToBoxAdapter(child: SizedBox(height: MediaQuery.of(context).padding.top + 8)),
         SliverPadding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -431,9 +455,12 @@ class LibraryScreen extends ConsumerWidget {
             ),
           ),
       ],
+        ),
+      ),
     );
   }
 }
+
 
 class _FilterChip extends StatelessWidget {
   final String label;
@@ -1147,7 +1174,7 @@ class _GenreEditorModalState extends State<_GenreEditorModal> {
               IconButton(icon: const Icon(Icons.close, color: Colors.white70), onPressed: () => Navigator.pop(context)),
             ],
           ),
-          const Text('Tap a genre to rename it across all songs.', style: TextStyle(color: BopTheme.textSecondary, fontSize: 13)),
+          const Text('Tap edit to rename · tap eye to view & edit songs.', style: TextStyle(color: BopTheme.textSecondary, fontSize: 13)),
           const SizedBox(height: 20),
           Expanded(
             child: ListView.separated(
@@ -1159,7 +1186,19 @@ class _GenreEditorModalState extends State<_GenreEditorModal> {
                   contentPadding: EdgeInsets.zero,
                   leading: const Icon(Icons.label_outline, color: BopTheme.green),
                   title: Text(genre, style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w600)),
-                  trailing: const Icon(Icons.edit, color: Colors.white24, size: 18),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.visibility, color: Colors.white24, size: 18),
+                        onPressed: () => _viewGenreSongs(context, genre),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.edit, color: Colors.white24, size: 18),
+                        onPressed: () => _renameGenre(context, genre),
+                      ),
+                    ],
+                  ),
                   onTap: () => _renameGenre(context, genre),
                 );
               },
@@ -1168,6 +1207,24 @@ class _GenreEditorModalState extends State<_GenreEditorModal> {
         ],
       ),
     );
+  }
+
+  void _viewGenreSongs(BuildContext context, String genre) async {
+    final isar = DbService.instance.isar;
+    final allSongs = await isar.songs.where().findAll();
+    final genreSongs = allSongs.where((s) {
+      if (s.genre.isEmpty) return false;
+      return s.genre.split(RegExp(r'[,/]')).map((g) => g.trim().toLowerCase()).contains(genre.toLowerCase());
+    }).toList();
+
+    if (context.mounted) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => _GenreSongsViewerScreen(genre: genre, songs: genreSongs),
+        ),
+      );
+    }
   }
 
   void _renameGenre(BuildContext context, String oldName) {
@@ -1267,4 +1324,254 @@ void _showCreditsDialog(BuildContext context, Song song) {
       ],
     ),
   );
+}
+
+// ── Genre Songs Viewer ─────────────────────────────────────────────────────────
+class _GenreSongsViewerScreen extends StatefulWidget {
+  final String genre;
+  final List<Song> songs;
+  const _GenreSongsViewerScreen({required this.genre, required this.songs});
+
+  @override
+  State<_GenreSongsViewerScreen> createState() => _GenreSongsViewerScreenState();
+}
+
+class _GenreSongsViewerScreenState extends State<_GenreSongsViewerScreen> {
+  final Set<int> _selected = {};
+  bool _selectionMode = false;
+  late List<Song> _songs;
+
+  @override
+  void initState() {
+    super.initState();
+    _songs = List.from(widget.songs);
+  }
+
+  void _toggleSelection(int id) {
+    setState(() {
+      if (_selected.contains(id)) {
+        _selected.remove(id);
+        if (_selected.isEmpty) _selectionMode = false;
+      } else {
+        _selected.add(id);
+      }
+    });
+  }
+
+  void _enterSelection(int id) {
+    setState(() {
+      _selectionMode = true;
+      _selected.add(id);
+    });
+  }
+
+  void _editSingle(Song song) {
+    Navigator.push(context, MaterialPageRoute(builder: (_) => MetadataEditorScreen(songs: [song])));
+  }
+
+  void _editSelected() {
+    final toEdit = _songs.where((s) => _selected.contains(s.id)).toList();
+    Navigator.push(context, MaterialPageRoute(builder: (_) => MetadataEditorScreen(songs: toEdit)));
+  }
+
+  Future<void> _removeFromLibrary(Song song) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF282828),
+        title: const Text('Remove from Library?', style: TextStyle(color: Colors.white)),
+        content: Text(
+          '"${song.title}" will be removed from your library. The file won\'t be deleted.',
+          style: const TextStyle(color: BopTheme.textSecondary),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel', style: TextStyle(color: Colors.white54))),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Remove', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+    if (confirm == true && mounted) {
+      await DbService.instance.isar.writeTxn(() => DbService.instance.isar.songs.delete(song.id));
+      setState(() {
+        _songs.removeWhere((s) => s.id == song.id);
+        _selected.remove(song.id);
+        if (_selected.isEmpty) _selectionMode = false;
+      });
+    }
+  }
+
+  Future<void> _removeSelectedFromLibrary() async {
+    final count = _selected.length;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF282828),
+        title: const Text('Remove from Library?', style: TextStyle(color: Colors.white)),
+        content: Text(
+          'Remove $count song${count == 1 ? '' : 's'} from your library? Files won\'t be deleted.',
+          style: const TextStyle(color: BopTheme.textSecondary),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel', style: TextStyle(color: Colors.white54))),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Remove', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+    if (confirm == true && mounted) {
+      final ids = _selected.toList();
+      await DbService.instance.isar.writeTxn(() => DbService.instance.isar.songs.deleteAll(ids));
+      setState(() {
+        _songs.removeWhere((s) => ids.contains(s.id));
+        _selected.clear();
+        _selectionMode = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: BopTheme.background,
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF1A1A1A),
+        leading: _selectionMode
+            ? IconButton(
+                icon: const Icon(Icons.close, color: Colors.white),
+                onPressed: () => setState(() { _selected.clear(); _selectionMode = false; }),
+              )
+            : IconButton(
+                icon: const Icon(Icons.arrow_back, color: Colors.white),
+                onPressed: () => Navigator.pop(context),
+              ),
+        title: _selectionMode
+            ? Text('${_selected.length} selected', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold))
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(widget.genre, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 17)),
+                  Text('${_songs.length} songs', style: const TextStyle(color: BopTheme.textSecondary, fontSize: 12)),
+                ],
+              ),
+        actions: [
+          if (_selectionMode) ...[
+            TextButton.icon(
+              onPressed: () => setState(() {
+                if (_selected.length == _songs.length) {
+                  _selected.clear();
+                } else {
+                  _selected.addAll(_songs.map((s) => s.id));
+                }
+              }),
+              icon: Icon(
+                _selected.length == _songs.length ? Icons.deselect : Icons.select_all,
+                color: BopTheme.green, size: 18,
+              ),
+              label: Text(
+                _selected.length == _songs.length ? 'Deselect' : 'All',
+                style: const TextStyle(color: BopTheme.green),
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.edit_note, color: BopTheme.green),
+              tooltip: 'Edit selected',
+              onPressed: _selected.isEmpty ? null : _editSelected,
+            ),
+            IconButton(
+              icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+              tooltip: 'Remove from library',
+              onPressed: _selected.isEmpty ? null : _removeSelectedFromLibrary,
+            ),
+          ],
+        ],
+      ),
+      body: _songs.isEmpty
+          ? Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.music_off, color: BopTheme.textMuted, size: 48),
+                  const SizedBox(height: 12),
+                  Text('No songs tagged as "${widget.genre}"',
+                      style: const TextStyle(color: BopTheme.textMuted, fontSize: 14)),
+                ],
+              ),
+            )
+          : ListView.separated(
+              itemCount: _songs.length,
+              separatorBuilder: (_, __) => const Divider(height: 1, color: Colors.white10),
+              itemBuilder: (context, i) {
+                final song = _songs[i];
+                final isSelected = _selected.contains(song.id);
+                return ListTile(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+                  onTap: () {
+                    if (_selectionMode) {
+                      _toggleSelection(song.id);
+                    } else {
+                      _editSingle(song);
+                    }
+                  },
+                  onLongPress: () {
+                    if (!_selectionMode) _enterSelection(song.id);
+                  },
+                  leading: Stack(
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: SizedBox(
+                          width: 46,
+                          height: 46,
+                          child: song.artBytes != null && song.artBytes!.isNotEmpty
+                              ? Image.memory(Uint8List.fromList(song.artBytes!), fit: BoxFit.cover, gaplessPlayback: true)
+                              : Container(color: BopTheme.surfaceAlt, child: const Icon(Icons.music_note, color: Colors.white24, size: 22)),
+                        ),
+                      ),
+                      if (isSelected)
+                        Positioned.fill(
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: BopTheme.green.withOpacity(0.7),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: const Icon(Icons.check, color: Colors.white, size: 20),
+                          ),
+                        ),
+                    ],
+                  ),
+                  title: Text(song.title,
+                      style: TextStyle(
+                          color: isSelected ? BopTheme.green : Colors.white,
+                          fontWeight: FontWeight.w600, fontSize: 13),
+                      maxLines: 1, overflow: TextOverflow.ellipsis),
+                  subtitle: Text(song.artist,
+                      style: const TextStyle(color: BopTheme.textSecondary, fontSize: 11),
+                      maxLines: 1, overflow: TextOverflow.ellipsis),
+                  trailing: _selectionMode
+                      ? null
+                      : Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.edit_note, color: BopTheme.textMuted, size: 20),
+                              tooltip: 'Edit metadata',
+                              onPressed: () => _editSingle(song),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
+                              tooltip: 'Remove from library',
+                              onPressed: () => _removeFromLibrary(song),
+                            ),
+                          ],
+                        ),
+                );
+              },
+            ),
+    );
+  }
 }

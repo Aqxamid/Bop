@@ -29,6 +29,7 @@ class HomeScreen extends ConsumerWidget {
     else if (hour < 17) greeting = 'Good afternoon';
 
     return ListView(
+      primary: true,
       padding: EdgeInsets.fromLTRB(16, MediaQuery.of(context).padding.top + 8, 16, 120),
       children: [
         Row(

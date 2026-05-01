@@ -3,6 +3,7 @@
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/services.dart';
 import '../providers/stats_provider.dart';
 
 import '../theme/app_theme.dart';
@@ -70,10 +71,7 @@ class MainShell extends ConsumerWidget {
         if (shouldExit == true) {
           // In Flutter, to exit the app programmatically on Android:
           // SystemNavigator.pop() is generally preferred.
-          // For now, we allow the pop if confirmed.
-          if (context.mounted) {
-            Navigator.of(context).pop(); // This will exit if it's the root route
-          }
+          SystemNavigator.pop();
         }
       },
       child: Scaffold(
@@ -88,7 +86,7 @@ class MainShell extends ConsumerWidget {
             const Positioned(
               left: 0,
               right: 0,
-              bottom: 80, // Elevated to clear the navigation bar comfortably
+              bottom: 76, // Elevated slightly more for better breathing room
               child: MiniPlayer(),
             ),
           ],
@@ -119,10 +117,11 @@ class _BopNavBar extends StatelessWidget {
 
     return ClipRRect(
       child: BackdropFilter(
-        filter: ui.ImageFilter.blur(sigmaX: 4, sigmaY: 4),
+        filter: ui.ImageFilter.blur(sigmaX: 2, sigmaY: 2),
         child: Container(
           decoration: BoxDecoration(
-            color: Colors.black.withOpacity(0.85),
+            // 2% opaque = 98% transparent — ultra-clean glass effect
+            color: Colors.black.withOpacity(0.02),
             border: const Border(top: BorderSide(color: Colors.white10, width: 0.5)),
           ),
           child: SafeArea(
