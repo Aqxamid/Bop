@@ -19,13 +19,18 @@ import '../services/llm_service.dart';
 import 'stats_provider.dart';
 import 'settings_provider.dart';
 
+// Stream provider for UI components that need frequent position updates
+final positionProvider = StreamProvider<Duration>((ref) {
+  // Use a fallback in case audioHandler is accessed very early, but it usually isn't.
+  return audioHandler.player.positionStream;
+});
+
 // ── Player state ──────────────────────────────────────────────
 enum PlayerRepeatMode { off, one, all }
 
 class PlayerState {
   final Song? currentSong;
   final bool isPlaying;
-  final Duration position;
   final Duration duration;
   final List<Song> queue;
   final int currentIndex;
@@ -36,7 +41,6 @@ class PlayerState {
   const PlayerState({
     this.currentSong,
     this.isPlaying = false,
-    this.position = Duration.zero,
     this.duration = Duration.zero,
     this.queue = const [],
     this.currentIndex = 0,
@@ -48,7 +52,6 @@ class PlayerState {
   PlayerState copyWith({
     Song? currentSong,
     bool? isPlaying,
-    Duration? position,
     Duration? duration,
     List<Song>? queue,
     int? currentIndex,
@@ -61,7 +64,6 @@ class PlayerState {
     return PlayerState(
       currentSong: clearSong ? null : (currentSong ?? this.currentSong),
       isPlaying: isPlaying ?? this.isPlaying,
-      position: position ?? this.position,
       duration: duration ?? this.duration,
       queue: queue ?? this.queue,
       currentIndex: currentIndex ?? this.currentIndex,
@@ -202,11 +204,12 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
   AudioPlayer get _player => audioHandler.player;
   final _db = DbService.instance;
 
-  // Track current play event for updating listenedMs
   int? _currentPlayEventId;
   DateTime? _playStartTime;
   Timer? _sleepTimer;
   bool _isGaplessSkipping = false;
+  Duration _currentPosition = Duration.zero;
+  Duration _lastSavedPosition = Duration.zero;
 
   StreamSubscription<Duration>? _positionSub;
   StreamSubscription<Duration?>? _durationSub;
@@ -242,12 +245,13 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
         
         state = state.copyWith(
           currentSong: song,
-          position: Duration(milliseconds: lastPosMs),
           queue: queue,
           currentIndex: lastIndex,
           shuffleEnabled: shuffle,
           repeatMode: PlayerRepeatMode.values[repeatIdx],
         );
+        _currentPosition = Duration(milliseconds: lastPosMs);
+        _lastSavedPosition = _currentPosition;
         
         // Update notification first so it's ready while loading
         await audioHandler.updateSongNotification(song);
@@ -261,9 +265,10 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
     // Position stream - Throttled
     _positionSub = _player.positionStream.listen((pos) {
       if (mounted) {
-        final diff = (pos - state.position).abs();
+        _currentPosition = pos;
+        final diff = (pos - _lastSavedPosition).abs();
         if (diff.inMilliseconds >= 500 || pos.inMilliseconds < 500) {
-          state = state.copyWith(position: pos);
+          _lastSavedPosition = pos;
           _savePosition(pos.inMilliseconds);
         }
 
@@ -354,8 +359,8 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
       
       state = state.copyWith(
         currentSong: fullSong,
-        position: Duration.zero,
       );
+      _currentPosition = Duration.zero;
       _saveState();
 
       // Update notification first
@@ -393,8 +398,8 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
       queue: songs,
       currentIndex: startIndex,
       currentSong: songs[startIndex],
-      position: Duration.zero,
     );
+    _currentPosition = Duration.zero;
 
     // ── STEP 2: Async cleanup of previous track
     await _finalizeCurrentPlayEvent(skipped: false);
@@ -412,8 +417,8 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
       queue: fullSongs,
       currentIndex: startIndex,
       currentSong: startSong,
-      position: Duration.zero,
     );
+    _currentPosition = Duration.zero;
     _saveState();
 
     await audioHandler.updateSongNotification(startSong);
@@ -500,7 +505,8 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
 
   Future<void> stop() async {
     await _player.stop();
-    state = state.copyWith(clearSong: true, isPlaying: false, position: Duration.zero, queue: []);
+    state = state.copyWith(clearSong: true, isPlaying: false, queue: []);
+    _currentPosition = Duration.zero;
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('last_song_id');
     await prefs.remove('last_queue_ids');
@@ -574,7 +580,7 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
   }
 
   Future<void> skipPrevious() async {
-    if (state.position.inSeconds > 3) {
+    if (_currentPosition.inSeconds > 3) {
       await _player.seek(Duration.zero);
       return;
     }
@@ -611,7 +617,8 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
           play(newQueue[nextIndex]);
         } else {
           _player.stop();
-          state = state.copyWith(queue: [], currentIndex: 0, currentSong: null, isPlaying: false, position: Duration.zero);
+          state = state.copyWith(queue: [], currentIndex: 0, currentSong: null, isPlaying: false);
+          _currentPosition = Duration.zero;
         }
       } else if (state.currentIndex > indexInQueue) {
         state = state.copyWith(queue: newQueue, currentIndex: state.currentIndex - 1);
@@ -747,7 +754,7 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
   Future<void> _updateListenedMs() async {
     if (_currentPlayEventId == null || _playStartTime == null) return;
 
-    final listenedMs = state.position.inMilliseconds;
+    final listenedMs = _currentPosition.inMilliseconds;
     final event = await _db.playEvents.get(_currentPlayEventId!);
     if (event != null) {
       event.listenedMs = listenedMs;
@@ -760,7 +767,7 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
   Future<void> _finalizeCurrentPlayEvent({required bool skipped}) async {
     if (_currentPlayEventId == null) return;
 
-    final listenedMs = state.position.inMilliseconds;
+    final listenedMs = _currentPosition.inMilliseconds;
     final event = await _db.playEvents.get(_currentPlayEventId!);
     if (event != null) {
       event.listenedMs = listenedMs;
@@ -785,7 +792,7 @@ class PlayerNotifier extends StateNotifier<PlayerState> {
 
   bool _isSkippedEarly() {
     if (state.duration.inMilliseconds == 0) return false;
-    return state.position.inMilliseconds <
+    return _currentPosition.inMilliseconds <
         (state.duration.inMilliseconds * 0.5);
   }
 

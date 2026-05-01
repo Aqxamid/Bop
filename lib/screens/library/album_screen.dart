@@ -33,7 +33,7 @@ class _AlbumScreenState extends ConsumerState<AlbumScreen>
   Future<void> _extractColor(List<int> artBytes) async {
     if (_colorExtracted) return;
     _colorExtracted = true;
-    final provider = MemoryImage(Uint8List.fromList(artBytes));
+    final provider = ResizeImage(MemoryImage(Uint8List.fromList(artBytes)), width: 100);
     try {
       final palette = await PaletteGenerator.fromImageProvider(
         provider,
@@ -118,6 +118,7 @@ class _AlbumScreenState extends ConsumerState<AlbumScreen>
                                     Uint8List.fromList(artBytes),
                                     fit: BoxFit.cover,
                                     gaplessPlayback: true,
+                                    cacheWidth: 800,
                                   ),
                           ),
                         ),

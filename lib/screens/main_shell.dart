@@ -115,51 +115,45 @@ class _BopNavBar extends StatelessWidget {
       (Icons.library_music, Icons.library_music_outlined, 'Library'),
     ];
 
-    return ClipRRect(
-      child: BackdropFilter(
-        filter: ui.ImageFilter.blur(sigmaX: 2, sigmaY: 2),
-        child: Container(
-          decoration: BoxDecoration(
-            // 2% opaque = 98% transparent — ultra-clean glass effect
-            color: Colors.black.withOpacity(0.02),
-            border: const Border(top: BorderSide(color: Colors.white10, width: 0.5)),
-          ),
-          child: SafeArea(
-            top: false,
-            child: SizedBox(
-              height: 60,
-              child: Row(
-                children: items.asMap().entries.map((entry) {
-                  final i = entry.key;
-                  final item = entry.value;
-                  final isActive = i == currentIndex;
-                  return Expanded(
-                    child: InkWell(
-                      onTap: () => onTap(i),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            isActive ? item.$1 : item.$2,
-                            color: isActive ? BopTheme.textPrimary : BopTheme.textSecondary,
-                            size: 24,
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            item.$3,
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: isActive ? BopTheme.textPrimary : BopTheme.textSecondary,
-                              fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
-                            ),
-                          ),
-                        ],
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFA121212),
+        border: const Border(top: BorderSide(color: Colors.white10, width: 0.5)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: SizedBox(
+          height: 60,
+          child: Row(
+            children: items.asMap().entries.map((entry) {
+              final i = entry.key;
+              final item = entry.value;
+              final isActive = i == currentIndex;
+              return Expanded(
+                child: InkWell(
+                  onTap: () => onTap(i),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        isActive ? item.$1 : item.$2,
+                        color: isActive ? BopTheme.textPrimary : BopTheme.textSecondary,
+                        size: 24,
                       ),
-                    ),
-                  );
-                }).toList(),
-              ),
-            ),
+                      const SizedBox(height: 4),
+                      Text(
+                        item.$3,
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: isActive ? BopTheme.textPrimary : BopTheme.textSecondary,
+                          fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }).toList(),
           ),
         ),
       ),

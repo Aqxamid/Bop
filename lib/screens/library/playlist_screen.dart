@@ -43,7 +43,7 @@ class _PlaylistScreenState extends ConsumerState<PlaylistScreen>
   Future<void> _extractColor(List<int> artBytes) async {
     if (_colorExtracted) return;
     _colorExtracted = true;
-    final provider = MemoryImage(Uint8List.fromList(artBytes));
+    final provider = ResizeImage(MemoryImage(Uint8List.fromList(artBytes)), width: 100);
     try {
       final palette = await PaletteGenerator.fromImageProvider(
         provider,

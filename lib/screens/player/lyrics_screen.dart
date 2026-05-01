@@ -29,7 +29,7 @@ class _LyricsScreenState extends ConsumerState<LyricsScreen> {
   Widget build(BuildContext context) {
     final lyricsAsync = ref.watch(lyricsProvider(widget.song));
     // Optimization: Selective watching to avoid rebuilding entire screen on every frame
-    final position = ref.watch(playerProvider.select((s) => s.position));
+    final position = ref.watch(positionProvider).value ?? Duration.zero;
 
     return Scaffold(
       backgroundColor: Colors.black,

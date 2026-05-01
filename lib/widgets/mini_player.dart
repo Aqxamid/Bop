@@ -11,7 +11,7 @@ import '../screens/player/now_playing_screen.dart';
 final _colorCache = <int, Color>{};
 
 Future<Color> _extractDominantColor(List<int> artBytes) async {
-  final imageProvider = MemoryImage(Uint8List.fromList(artBytes));
+  final imageProvider = ResizeImage(MemoryImage(Uint8List.fromList(artBytes)), width: 100);
   try {
     final palette = await PaletteGenerator.fromImageProvider(
       imageProvider,
@@ -86,12 +86,6 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer>
     if (song.artBytes != null && song.artBytes!.isNotEmpty) {
       _updateColor(song.id, song.artBytes!);
     }
-
-    final position = playerState.position;
-    final duration = playerState.duration;
-    final progress = duration.inMilliseconds > 0
-        ? (position.inMilliseconds / duration.inMilliseconds).clamp(0.0, 1.0)
-        : 0.0;
 
     return SlideTransition(
       position: _slideAnimation,
@@ -197,14 +191,24 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer>
                   bottom: 0,
                   left: 0,
                   right: 0,
-                  child: Container(
-                    height: 2,
-                    color: Colors.white.withOpacity(0.1),
-                    child: FractionallySizedBox(
-                      alignment: Alignment.centerLeft,
-                      widthFactor: progress,
-                      child: Container(color: Colors.white.withOpacity(0.5)),
-                    ),
+                  child: Consumer(
+                    builder: (context, ref, _) {
+                      final position = ref.watch(positionProvider).value ?? Duration.zero;
+                      final duration = playerState.duration;
+                      final progress = duration.inMilliseconds > 0
+                          ? (position.inMilliseconds / duration.inMilliseconds).clamp(0.0, 1.0)
+                          : 0.0;
+
+                      return Container(
+                        height: 2,
+                        color: Colors.white.withOpacity(0.1),
+                        child: FractionallySizedBox(
+                          alignment: Alignment.centerLeft,
+                          widthFactor: progress,
+                          child: Container(color: Colors.white.withOpacity(0.5)),
+                        ),
+                      );
+                    },
                   ),
                 ),
                 // Drag handle hint

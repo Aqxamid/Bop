@@ -21,7 +21,7 @@ import 'lyrics_screen.dart';
 final _dominantColorCache = <int, Color>{};
 
 Future<Color> _extractColor(List<int> artBytes) async {
-  final provider = MemoryImage(Uint8List.fromList(artBytes));
+  final provider = ResizeImage(MemoryImage(Uint8List.fromList(artBytes)), width: 100);
   try {
     final palette = await PaletteGenerator.fromImageProvider(
       provider,
@@ -86,11 +86,7 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen>
     final playerState = ref.watch(playerProvider);
     final song = playerState.currentSong ?? widget.song;
     final isPlaying = playerState.isPlaying;
-    final position = playerState.position;
     final duration = playerState.duration;
-    final progress = duration.inMilliseconds > 0
-        ? position.inMilliseconds / duration.inMilliseconds
-        : 0.0;
 
     // Using ref.listen for side effects is more efficient than build-time checks
     ref.listen(playerProvider, (previous, next) {
@@ -136,11 +132,7 @@ class _NowPlayingContent extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final playerState = ref.watch(playerProvider);
     final isPlaying = playerState.isPlaying;
-    final position = playerState.position;
     final duration = playerState.duration;
-    final progress = duration.inMilliseconds > 0
-        ? position.inMilliseconds / duration.inMilliseconds
-        : 0.0;
 
     return Container(
       decoration: BoxDecoration(
@@ -241,6 +233,7 @@ class _NowPlayingContent extends ConsumerWidget {
                                 fit: BoxFit.cover,
                                 gaplessPlayback: true,
                                 alignment: Alignment.center,
+                                cacheWidth: 800,
                               )
                             : _PlaceholderArt(title: displaySong.title),
                       );
@@ -298,35 +291,43 @@ class _NowPlayingContent extends ConsumerWidget {
               // ── Progress bar ──────────────────────────
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: Column(
-                  children: [
-                    SliderTheme(
-                      data: SliderThemeData(
-                        trackHeight: 3,
-                        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-                        activeTrackColor: Colors.white,
-                        inactiveTrackColor: Colors.white.withOpacity(0.15),
-                        thumbColor: Colors.white,
-                      ),
-                      child: Slider(
-                        value: progress.clamp(0.0, 1.0),
-                        onChanged: (v) {
-                          final newPos = Duration(milliseconds: (v * duration.inMilliseconds).toInt());
-                          ref.read(playerProvider.notifier).seek(newPos);
-                        },
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(_formatDuration(position), style: const TextStyle(color: Colors.white70, fontSize: 12)),
-                          Text(_formatDuration(duration), style: const TextStyle(color: Colors.white70, fontSize: 12)),
-                        ],
-                      ),
-                    ),
-                  ],
+                child: Consumer(
+                  builder: (context, ref, _) {
+                    final position = ref.watch(positionProvider).value ?? Duration.zero;
+                    final progress = duration.inMilliseconds > 0
+                        ? position.inMilliseconds / duration.inMilliseconds
+                        : 0.0;
+                    return Column(
+                      children: [
+                        SliderTheme(
+                          data: SliderThemeData(
+                            trackHeight: 3,
+                            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                            activeTrackColor: Colors.white,
+                            inactiveTrackColor: Colors.white.withOpacity(0.15),
+                            thumbColor: Colors.white,
+                          ),
+                          child: Slider(
+                            value: progress.clamp(0.0, 1.0),
+                            onChanged: (v) {
+                              final newPos = Duration(milliseconds: (v * duration.inMilliseconds).toInt());
+                              ref.read(playerProvider.notifier).seek(newPos);
+                            },
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(_formatDuration(position), style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                              Text(_formatDuration(duration), style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                            ],
+                          ),
+                        ),
+                      ],
+                    );
+                  },
                 ),
               ),
 
@@ -581,7 +582,7 @@ class _FullLyricsState extends ConsumerState<_FullLyrics> {
   @override
   Widget build(BuildContext context) {
     final lyricsAsync = ref.watch(lyricsProvider(widget.song));
-    final position = ref.watch(playerProvider.select((s) => s.position));
+    final position = ref.watch(positionProvider).value ?? Duration.zero;
 
     final cardColor = HSLColor.fromColor(widget.dominantColor)
         .withLightness(0.15)
